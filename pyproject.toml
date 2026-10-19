@@ -3,6 +3,8 @@ name = "aiscript"
 version = "1.0.0"
 description = "JIT-compile plain-English intents into cached, reviewed shell scripts via an LLM."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Daniel Illescas Romero", email = "illescas.daniel@protonmail.com" }
 ]
