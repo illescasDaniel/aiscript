@@ -1,0 +1,41 @@
+[project]
+name = "aiscript"
+version = "0.1.0"
+description = "JIT-compile plain-English intents into cached, reviewed shell scripts via an LLM."
+readme = "README.md"
+authors = [
+    { name = "Daniel Illescas Romero", email = "illescas.daniel@protonmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=3.35.1",
+    "pyyaml>=6.0.3",
+    "typesafe-sdk>=0.7.5",
+]
+
+[project.scripts]
+aiscript = "aiscript.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ANN"]
+
+[tool.ruff.lint.flake8-annotations]
+# Test doubles forward arbitrary arguments as `*args: Any, **kwargs: Any`.
+allow-star-arg-any = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
