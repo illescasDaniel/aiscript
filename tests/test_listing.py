@@ -6,6 +6,7 @@ import pytest
 from aiscript import listing, paths
 
 T = 1_000_000_000_000_000_000
+SEC = 1_000_000_000  # Windows timestamps have 100 ns resolution: offsets must be coarser
 
 HEADER = """#!/usr/bin/env bash
 set -euo pipefail
@@ -61,7 +62,7 @@ def test_list_empty(capsys: pytest.CaptureFixture[str]) -> None:
 def test_list_table(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("COLUMNS", "120")
     write(paths.prompt_path("foo"), "do foo", T)
-    write(paths.function_path("foo"), HEADER, T + 10)
+    write(paths.function_path("foo"), HEADER, T + 10 * SEC)
     write(paths.prompt_path("bar"), "do bar", T)
     assert listing.list_commands() == 0
     out = capsys.readouterr().out.splitlines()
@@ -80,8 +81,8 @@ def test_list_stale_marked(
 ) -> None:
     monkeypatch.setenv("COLUMNS", "120")
     write(paths.function_path("foo"), HEADER, T)
-    write(paths.prompt_path("foo"), "changed", T + 1)
-    write(paths.function_path("ok"), HEADER, T + 5)
+    write(paths.prompt_path("foo"), "changed", T + SEC)
+    write(paths.function_path("ok"), HEADER, T + 5 * SEC)
     write(paths.prompt_path("ok"), "same", T)
     listing.list_commands()
     out = capsys.readouterr().out
