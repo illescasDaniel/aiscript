@@ -1,6 +1,6 @@
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import openai
 import pytest
@@ -10,7 +10,7 @@ from aiscript.config import ProviderConfig
 from aiscript.errors import AiscriptError
 
 P = ProviderConfig(name="openai", api_key="k", base_url=None, model="gpt-x")
-REQ = SimpleNamespace(method="POST", url="http://x/v1/chat/completions")
+REQ: Any = SimpleNamespace(method="POST", url="http://x/v1/chat/completions")
 
 
 def fake_client(
@@ -46,7 +46,9 @@ def fake_client(
 
 def status_error(cls: type[openai.APIStatusError], code: int) -> openai.APIStatusError:
     return cls(
-        "boom", response=SimpleNamespace(status_code=code, request=REQ, headers={}), body=None
+        "boom",
+        response=cast(Any, SimpleNamespace(status_code=code, request=REQ, headers={})),
+        body=None,
     )
 
 
