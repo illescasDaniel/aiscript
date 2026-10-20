@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 
-from aiscript import llm, paths, reviewer
+from aiscript import llm, paths, pysetup, reviewer
 from aiscript.config import Settings
 from aiscript.errors import AiscriptError
 
@@ -44,17 +45,26 @@ def build(name: str, settings: Settings) -> Path:
     print(f"Generating {name!r} with {gen.name}/{gen.model}...", file=sys.stderr)
     script = llm.generate_script(gen, name, intent)
 
-    shell = paths.shell_kind()
-    result = reviewer.review(script, shell, settings.reviewer)
-    if not reviewer.confirm(script, result):
+    result = reviewer.review(script.code, script.language, settings.reviewer, script.dependencies)
+    if not reviewer.confirm(script.code, result):
         raise AiscriptError("Script rejected; nothing saved.")
 
     paths.ensure_dirs()
-    target = paths.function_path(name)
+    if script.dependencies:
+        target = pysetup.install(name, script.code, script.dependencies)
+    else:
+        target = paths.function_target(name, script.language, has_deps=False)
+        _write_file(name, target, script.code)
+    _remove_other_artifacts(name, target)
+    print(f"Saved {target}", file=sys.stderr)
+    return target
+
+
+def _write_file(name: str, target: Path, code: str) -> None:
     fd, tmp_name = tempfile.mkstemp(dir=paths.functions_dir(), prefix=f".{name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(script)
+            fh.write(code)
         if not paths.is_windows():
             os.chmod(tmp_name, 0o755)
         os.replace(tmp_name, target)
@@ -62,5 +72,17 @@ def build(name: str, settings: Settings) -> Path:
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
         raise
-    print(f"Saved {target}", file=sys.stderr)
-    return target
+
+
+def _remove_other_artifacts(name: str, target: Path) -> None:
+    """Drop builds of ``name`` in another language or layout, so only ``target`` remains."""
+    for path in paths.function_artifacts(name):
+        if path == target or path in target.parents:
+            continue
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        except OSError as exc:
+            print(f"aiscript: warning: could not remove old build {path}: {exc}", file=sys.stderr)

@@ -21,8 +21,10 @@ src/aiscript/
 ├── init_cmd.py   # `--init`: dirs, config template, .gitignore
 ├── paths.py      # config root, prompt/function paths, name validation, OS/shell detection
 ├── builder.py    # staleness check and build pipeline (generate, review, atomic write)
-├── llm.py        # OpenAI client, system prompt, script generation
-├── reviewer.py   # static scan, decision-model review, confirmation prompt
+├── llm.py        # OpenAI client, system prompt, script generation, language/dependency parsing
+├── env.py        # host description for the prompt (OS, arch, Python, uv); Python lookup
+├── pysetup.py    # project folder + private venv for Python scripts with dependencies
+├── reviewer.py   # static scan (regex for shell, AST for Python), decision-model review, confirmation
 ├── listing.py    # header parsing and `--list` output
 ├── runner.py     # runs the cached script
 └── errors.py     # error types and exit codes

@@ -1,3 +1,4 @@
+import sys
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
@@ -107,6 +108,8 @@ def test_prompt_bash() -> None:
         "$1",
         "usage message",
         "raw script",
+        "#!/usr/bin/env python3",
+        "pep 723",
     ):
         assert needle in s, needle
 
@@ -119,6 +122,23 @@ def test_prompt_powershell() -> None:
     assert "# Description:" in s and "# Usage:" in s
     assert "Do NOT add a shebang" in s
     assert "set -euo pipefail" not in s
+    assert "PYTHON SPECIFICS" in s and "PowerShell" in s
+
+
+def test_prompt_python_rules() -> None:
+    s = llm.system_prompt("bash", "- Python: 3.12.1 (python3)")
+    assert "- Python: 3.12.1 (python3)" in s
+    for needle in (
+        "CHOOSING THE LANGUAGE",
+        "PYTHON SPECIFICS",
+        "in python",
+        "never call pip",
+        "shutil.rmtree",
+        "shell=True",
+        "pathlib",
+        "sys.exit",
+    ):
+        assert needle in s, needle
 
 
 # ---- make_client / chat
@@ -207,23 +227,156 @@ def test_chat_errors(monkeypatch: pytest.MonkeyPatch, exc: Exception, text: str)
 # ---- generate_script
 
 
-def test_generate_script(monkeypatch: pytest.MonkeyPatch) -> None:
+def patch_gen(monkeypatch: pytest.MonkeyPatch, reply: str, shell: str = "bash") -> dict[str, Any]:
     got: dict[str, Any] = {}
 
     def fake_chat(p: ProviderConfig, system: str, user: str, **kw: Any) -> str:
         got.update(p=p, system=system, user=user)
-        return "```bash\necho hi\n```"
+        return reply
 
     monkeypatch.setattr(llm, "chat", fake_chat)
-    monkeypatch.setattr(llm.paths, "shell_kind", lambda: "bash")
+    monkeypatch.setattr(llm.paths, "shell_kind", lambda: shell)
+    monkeypatch.setattr(llm.env, "describe", lambda: "- Host OS: TestOS")
+    return got
+
+
+def test_generate_script(monkeypatch: pytest.MonkeyPatch) -> None:
+    got = patch_gen(monkeypatch, "```bash\necho hi\n```")
     out = llm.generate_script(P, "hello", "say hi")
-    assert out == "#!/usr/bin/env bash\necho hi\n"
+    assert out == llm.GeneratedScript("#!/usr/bin/env bash\necho hi\n", "bash", [])
     assert got["p"] is P
     assert "hello" in got["user"] and "say hi" in got["user"]
-    assert "Bash" in got["system"]
+    assert "Bash" in got["system"] and "Host OS: TestOS" in got["system"]
 
 
 def test_generate_script_powershell(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(llm, "chat", lambda *a, **k: "Write-Host hi")
-    monkeypatch.setattr(llm.paths, "shell_kind", lambda: "powershell")
-    assert llm.generate_script(P, "x", "y") == "Write-Host hi\n"
+    patch_gen(monkeypatch, "Write-Host hi", "powershell")
+    assert llm.generate_script(P, "x", "y") == llm.GeneratedScript(
+        "Write-Host hi\n", "powershell", []
+    )
+
+
+def test_generate_script_python_with_deps(monkeypatch: pytest.MonkeyPatch) -> None:
+    code = (
+        "#!/usr/bin/env python3\n# aiscript: x\n# /// script\n"
+        '# dependencies = ["requests>=2"]\n# ///\nimport requests\nprint(requests)'
+    )
+    patch_gen(monkeypatch, f"```python\n{code}\n```")
+    out = llm.generate_script(P, "x", "y")
+    assert out.language == "python" and out.dependencies == ["requests>=2"]
+    assert out.code == code + "\n"
+
+
+def test_generate_script_python_syntax_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_gen(monkeypatch, "#!/usr/bin/env python3\ndef f(:\n")
+    with pytest.raises(AiscriptError, match="Python with a syntax error"):
+        llm.generate_script(P, "x", "y")
+
+
+def test_generate_script_bad_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_gen(
+        monkeypatch,
+        '#!/usr/bin/env python3\n# /// script\n# dependencies = ["-e ."]\n# ///\nprint(1)',
+    )
+    with pytest.raises(AiscriptError, match="-e ."):
+        llm.generate_script(P, "x", "y")
+
+
+# ---- detect_language / clean_script with python
+
+
+@pytest.mark.parametrize(
+    "first", ["#!/usr/bin/env python3", "#!/usr/bin/env python", "#!/usr/bin/python3"]
+)
+def test_detect_python(first: str) -> None:
+    assert llm.detect_language(f"\n{first}\nprint(1)\n", "bash") == "python"
+    assert llm.detect_language(f"{first}\n", "powershell") == "python"
+
+
+def test_detect_shell() -> None:
+    assert llm.detect_language("#!/usr/bin/env bash\n# python\n", "bash") == "bash"
+    assert llm.detect_language("echo python3\n", "bash") == "bash"
+    assert llm.detect_language("Write-Host hi\n", "powershell") == "powershell"
+
+
+def test_clean_script_keeps_python_shebang() -> None:
+    out = llm.clean_script("```python\n#!/usr/bin/env python3\nprint(1)\n```", "bash")
+    assert out == "#!/usr/bin/env python3\nprint(1)\n"
+
+
+# ---- parse_dependencies
+
+BLOCK = "#!/usr/bin/env python3\n# aiscript: x\n# /// script\n{body}\n# ///\nprint(1)\n"
+
+
+def block(*lines: str) -> str:
+    return BLOCK.format(body="\n".join(lines))
+
+
+def test_deps_none() -> None:
+    assert llm.parse_dependencies("#!/usr/bin/env python3\nprint(1)\n") == []
+    assert llm.parse_dependencies(block('# requires-python = ">=3.8"')) == []
+
+
+def test_deps_valid() -> None:
+    code = block(
+        '# requires-python = ">=3.8"',
+        '# dependencies = ["requests>=2", "rich", "httpx[http2]>=0.27,<1",',
+        "#   \"tomli>=2; python_version < '3.11'\"]",
+    )
+    assert llm.parse_dependencies(code) == [
+        "requests>=2",
+        "rich",
+        "httpx[http2]>=0.27,<1",
+        "tomli>=2; python_version < '3.11'",
+    ]
+
+
+def test_deps_multiline_array() -> None:
+    code = block(
+        "# dependencies = [",
+        '#     "requests>=2",  # http',
+        '#     "rich[jupyter]",',
+        "# ]",
+    )
+    assert llm.parse_dependencies(code) == ["requests>=2", "rich[jupyter]"]
+
+
+def test_deps_fallback_parser(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Force the Python 3.10 path (no tomllib).
+    monkeypatch.setitem(sys.modules, "tomllib", None)
+    code = block(
+        '# requires-python = ">=3.8"',
+        "# dependencies = [",
+        '#     "requests>=2",  # a [comment]',
+        '#     "rich[jupyter]",',
+        "# ]",
+    )
+    assert llm.parse_dependencies(code) == ["requests>=2", "rich[jupyter]"]
+    assert llm.parse_dependencies(block("# x = 1")) == []
+
+
+@pytest.mark.parametrize(
+    "dep",
+    [
+        "pkg @ https://example.com/p.whl",
+        "git+https://github.com/a/b",
+        "https://example.com/p.whl",
+        "./local",
+        "../x/y",
+        "C:\\\\pkg",
+        "-e .",
+        "--index-url=x",
+        "",
+        "pkg@1",
+        "bad name!",
+    ],
+)
+def test_deps_rejected(dep: str) -> None:
+    with pytest.raises(AiscriptError, match="Unsupported dependency"):
+        llm.parse_dependencies(block(f"# dependencies = [{dep!r}]"))
+
+
+def test_deps_not_a_list() -> None:
+    with pytest.raises(AiscriptError):
+        llm.parse_dependencies(block('# dependencies = "requests"'))

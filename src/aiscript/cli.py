@@ -22,7 +22,7 @@ usage: aiscript NAME [args...]       run a command (created/built on first use)
        aiscript --list               list commands
        aiscript --edit NAME          edit a command's prompt (rebuilds on next run)
        aiscript --rebuild NAME       regenerate a command's script (does not run it)
-       aiscript --remove NAME        delete a command's prompt and script
+       aiscript --remove NAME        delete a command's prompt and script(s)
        aiscript --help | --version
 
 Everything after NAME is passed untouched to the generated script.
@@ -92,12 +92,15 @@ def _rebuild(name: str) -> int:
 
 def _remove(name: str) -> int:
     paths.validate_command_name(name)
-    targets = [p for p in (paths.prompt_path(name), paths.function_path(name)) if p.exists()]
+    targets = [p for p in (paths.prompt_path(name), *paths.function_artifacts(name)) if p.exists()]
     if not targets:
         raise AiscriptError(f"No command named {name!r}.")
     for path in targets:
         try:
-            path.unlink()
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
         except OSError as exc:
             raise AiscriptError(f"Could not remove {path}: {exc}") from exc
         _err(f"Removed {path}")

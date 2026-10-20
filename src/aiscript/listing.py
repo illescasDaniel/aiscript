@@ -50,7 +50,13 @@ def _command_names() -> list[str]:
     if pdir.is_dir():
         names.update(p.stem for p in pdir.glob("*.txt"))
     if fdir.is_dir():
-        names.update(p.stem for p in fdir.glob(f"*.{paths.script_ext()}"))
+        for p in fdir.iterdir():
+            if p.name.startswith("."):
+                continue
+            if p.is_file() and p.suffix in (".sh", ".ps1", ".py"):
+                names.add(p.stem)
+            elif p.is_dir() and (p / "main.py").is_file():
+                names.add(p.name)
     valid = []
     for n in names:
         try:
@@ -61,14 +67,24 @@ def _command_names() -> list[str]:
     return sorted(valid, key=str.lower)
 
 
+def _lang(fpath: Path) -> str:
+    """LANG column: sh, ps1, py or py+deps (project dir); blank when not built."""
+    if not fpath.exists():
+        return ""
+    if paths.is_project_main(fpath):
+        return "py+deps"
+    return fpath.suffix.lstrip(".")
+
+
 def list_commands() -> int:
     """Print a table of commands to stdout; return 0."""
-    rows: list[tuple[str, str, str]] = []
+    rows: list[tuple[str, str, str, str]] = []
     any_stale = False
     for name in _command_names():
         ppath = paths.prompt_path(name)
         fpath = paths.function_path(name)
         label = name
+        lang = _lang(fpath)
         if fpath.exists():
             header = parse_header(fpath)
             desc, usage = header["description"], header["usage"]
@@ -77,7 +93,7 @@ def list_commands() -> int:
                 any_stale = True
         else:
             desc, usage = _NOT_BUILT, ""
-        rows.append((label, desc, usage))
+        rows.append((label, lang, desc, usage))
 
     if not rows:
         print("No commands yet. Try: aiscript <name>", file=sys.stderr)
@@ -85,16 +101,17 @@ def list_commands() -> int:
 
     cols = shutil.get_terminal_size(fallback=(100, 24)).columns
     name_w = max(len("NAME"), *(len(r[0]) for r in rows))
-    usage_w = min(max(len("USAGE"), *(len(r[2]) for r in rows)), 40)
-    desc_w = max(20, cols - name_w - usage_w - 4)
-    desc_w = min(desc_w, max(len("DESCRIPTION"), *(len(r[1]) for r in rows)))
+    lang_w = max(len("LANG"), *(len(r[1]) for r in rows))
+    usage_w = min(max(len("USAGE"), *(len(r[3]) for r in rows)), 40)
+    desc_w = max(20, cols - name_w - lang_w - usage_w - 6)
+    desc_w = min(desc_w, max(len("DESCRIPTION"), *(len(r[2]) for r in rows)))
 
-    def fmt(a: str, b: str, c: str) -> str:
-        return f"{a:<{name_w}}  {b:<{desc_w}}  {c}".rstrip()
+    def fmt(a: str, b: str, c: str, d: str) -> str:
+        return f"{a:<{name_w}}  {b:<{lang_w}}  {c:<{desc_w}}  {d}".rstrip()
 
-    lines = [fmt("NAME", "DESCRIPTION", "USAGE")]
-    for label, desc, usage in rows:
-        lines.append(fmt(label, _truncate(desc, desc_w), _truncate(usage, usage_w)))
+    lines = [fmt("NAME", "LANG", "DESCRIPTION", "USAGE")]
+    for label, lang, desc, usage in rows:
+        lines.append(fmt(label, lang, _truncate(desc, desc_w), _truncate(usage, usage_w)))
     print("\n".join(lines))
     if any_stale:
         print(

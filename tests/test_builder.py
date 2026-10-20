@@ -8,7 +8,7 @@ from typing import NoReturn
 import pytest
 from helpers import TTY, FakeLLM
 
-from aiscript import builder, llm, paths, reviewer
+from aiscript import builder, llm, paths, pysetup, reviewer
 from aiscript.config import ProviderConfig, Settings
 from aiscript.errors import AiscriptError
 
@@ -123,3 +123,73 @@ def test_write_failure_cleans_temp(
     with pytest.raises(OSError):
         builder.build("hi", settings)
     assert list(paths.functions_dir().iterdir()) == []
+
+
+PY = "#!/usr/bin/env python3\n# aiscript: hi\n# Description: says hi\n# Usage: hi\nprint('hi')\n"
+
+
+def test_build_python_writes_py(settings: Settings, fake_llm: FakeLLM) -> None:
+    fake_llm.script = PY
+    write_prompt("hi")
+    path = builder.build("hi", settings)
+    assert path == paths.functions_dir() / "hi.py"
+    assert path == paths.function_path("hi")
+    assert path.read_text() == PY
+
+
+def test_language_switch_removes_old_build(settings: Settings, fake_llm: FakeLLM) -> None:
+    write_prompt("hi")
+    old = builder.build("hi", settings)
+    fake_llm.script = PY
+    new = builder.build("hi", settings)
+    assert not old.exists()
+    assert [p.name for p in paths.functions_dir().iterdir()] == [new.name]
+
+
+def test_dependencies_need_approval(settings: Settings, fake_llm: FakeLLM) -> None:
+    fake_llm.script, fake_llm.dependencies = PY, ["requests"]
+    write_prompt("hi")
+    # non-interactive stdin in pytest -> refused even though the code itself is benign
+    with pytest.raises(AiscriptError, match="rejected"):
+        builder.build("hi", settings)
+    assert list(paths.functions_dir().iterdir()) == []
+
+
+def test_dependencies_build_project(
+    settings: Settings, fake_llm: FakeLLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_llm.script, fake_llm.dependencies = PY, ["requests"]
+    write_prompt("hi")
+    paths.functions_dir().joinpath("hi.py").write_text(PY)  # previous stdlib-only build
+    monkeypatch.setattr(reviewer, "confirm", lambda s, r, **kw: True)
+    calls: list[tuple[str, str, list[str]]] = []
+
+    def fake_install(name: str, code: str, deps: list[str]) -> Path:
+        calls.append((name, code, deps))
+        main = paths.project_dir(name) / "main.py"
+        main.parent.mkdir()
+        main.write_text(code)
+        return main
+
+    monkeypatch.setattr(pysetup, "install", fake_install)
+    path = builder.build("hi", settings)
+    assert calls == [("hi", PY, ["requests"])]
+    assert path == paths.project_dir("hi") / "main.py" == paths.function_path("hi")
+    assert [p.name for p in paths.functions_dir().iterdir()] == ["hi"]
+
+
+def test_failed_project_install_keeps_old_build(
+    settings: Settings, fake_llm: FakeLLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_prompt("hi")
+    old = builder.build("hi", settings)
+    fake_llm.script, fake_llm.dependencies = PY, ["requests"]
+    monkeypatch.setattr(reviewer, "confirm", lambda s, r, **kw: True)
+
+    def boom(name: str, code: str, deps: list[str]) -> NoReturn:
+        raise AiscriptError("pip failed")
+
+    monkeypatch.setattr(pysetup, "install", boom)
+    with pytest.raises(AiscriptError, match="pip failed"):
+        builder.build("hi", settings)
+    assert old.read_text() == SAFE

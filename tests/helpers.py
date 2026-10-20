@@ -2,6 +2,7 @@
 
 from typing import TypeVar
 
+from aiscript import llm, paths
 from aiscript.config import ProviderConfig
 
 T = TypeVar("T")
@@ -29,10 +30,13 @@ class TTY:
 class FakeLLM:
     """Stand-in for ``llm.generate_script`` that records calls."""
 
-    def __init__(self, script: str) -> None:
+    def __init__(self, script: str, dependencies: list[str] | None = None) -> None:
         self.script = script
+        self.dependencies = dependencies or []
         self.calls: list[tuple[str, str]] = []
 
-    def __call__(self, p: ProviderConfig, name: str, intent: str) -> str:
+    def __call__(self, p: ProviderConfig, name: str, intent: str) -> llm.GeneratedScript:
         self.calls.append((name, intent))
-        return self.script
+        python = self.script.startswith("#!/usr/bin/env python")
+        language: paths.Language = "python" if python else paths.shell_kind()
+        return llm.GeneratedScript(self.script, language, list(self.dependencies))

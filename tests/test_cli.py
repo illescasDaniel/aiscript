@@ -306,3 +306,17 @@ def test_remove_then_list_is_empty(capsys: pytest.CaptureFixture[str]) -> None:
     capsys.readouterr()
     assert cli.main(["--list"]) == 0
     assert "echo" not in capsys.readouterr().out
+
+
+def test_remove_project_dir_and_other_artifacts(capsys: pytest.CaptureFixture[str]) -> None:
+    paths.ensure_dirs()
+    paths.prompt_path("proj").write_text("x\n")
+    project = paths.project_dir("proj")
+    (project / ".venv" / "bin").mkdir(parents=True)
+    (project / "main.py").write_text("print()\n")
+    py = paths.functions_dir() / "proj.py"
+    py.write_text("print()\n")
+    assert cli.main(["--remove", "proj"]) == 0
+    assert not project.exists() and not py.exists()
+    assert not paths.prompt_path("proj").exists()
+    assert str(project) in capsys.readouterr().err

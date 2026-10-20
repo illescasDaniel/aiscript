@@ -3,8 +3,10 @@
 [![PyPI version](https://img.shields.io/pypi/v/aiscript)](https://pypi.org/project/aiscript/)
 [![Python versions](https://img.shields.io/pypi/pyversions/aiscript)](https://pypi.org/project/aiscript/)
 
-Describe what you want in plain English and `aiscript` asks an LLM to write a shell script
-(Bash on Linux/macOS, PowerShell on Windows), caches it, and runs it. The next run is instant:
+Describe what you want in plain English and `aiscript` asks an LLM to write a script, caches
+it, and runs it. The model picks the language: your native shell (Bash on Linux/macOS, PowerShell
+on Windows) or Python when that fits better. Python scripts that need third-party packages get
+their own virtual environment. The next run is instant:
 no network, no config. Before anything risky is saved or run, every generated script is checked
 by a built-in static scan and, optionally, by a decision model: [Jev](https://docs.typesafe.ai)
 by TypeSafe AI (hosted) or a local model served by [Ollaya](https://ollaya.dev). Risky scripts
@@ -20,7 +22,19 @@ pipx install aiscript
 pip install aiscript
 ```
 
-Requires Python 3.10+. To work on aiscript itself, see [docs/development.md](docs/development.md).
+Requires Python 3.10+.
+
+To upgrade to the latest version, use the same tool you installed with:
+
+```sh
+uv tool upgrade aiscript
+# or
+pipx upgrade aiscript
+# or
+pip install --upgrade aiscript
+```
+
+Your config, prompts and cached scripts in `~/.config/aiscript/` are kept. To work on aiscript itself, see [docs/development.md](docs/development.md).
 
 ## Quickstart
 
@@ -121,17 +135,43 @@ variable, the legacy `secrets.yaml`): [docs/configuration.md](docs/configuration
 
 Command names must match `[A-Za-z0-9][A-Za-z0-9_-]*`.
 
+## Shell or Python
+
+The model is told your OS, architecture, native shell, the Python version it will run under and
+whether [uv](https://docs.astral.sh/uv/) is installed, and chooses the language: the shell for thin
+wrappers around CLI tools and pipelines, Python for parsing JSON/CSV/HTML, data processing, HTTP
+APIs and anything that would be fragile in shell. Say "in python" or "as a shell script" in your
+description to ask for one; the model follows it unless it is clearly a poor fit (and then notes
+why in the script header). `aiscript --list` shows each command's language.
+
+- **Standard-library Python** is saved as `functions/NAME.py` and run with the system `python3`
+  (`py -3` on Windows), or with aiscript's own interpreter if there is none.
+- **Python with dependencies** declares them in an inline
+  [PEP 723](https://peps.python.org/pep-0723/) block. After you approve (any dependency requires a
+  `[y/N]` approval that lists the packages), aiscript creates `functions/NAME/` with `main.py` and
+  a private `.venv`: with uv (`pyproject.toml` + `uv.lock`, `uv sync`) or otherwise with
+  `python -m venv` + `pip install -r requirements.txt`. The script always runs with that venv's
+  interpreter, so later runs are offline. A rebuild with the same dependencies reuses the venv; a
+  failed install keeps the previous version. Without uv, Debian/Ubuntu need `python3-venv`.
+
 ## How it works
 
 ```
 ~/.config/aiscript/          # or $XDG_CONFIG_HOME/aiscript, or $AISCRIPT_HOME
 ├── config.yaml              # providers and keys
 ├── prompts/<name>.txt       # your intent for each command
-└── functions/<name>.sh      # generated, reviewed scripts (.ps1 on Windows)
+└── functions/
+    ├── <name>.sh            # generated, reviewed scripts (.ps1 on Windows)
+    ├── <name>.py            # standard-library Python
+    └── <name>/              # Python with dependencies
+        ├── main.py
+        ├── .venv/
+        └── pyproject.toml + uv.lock  (or requirements.txt)
 ```
 
 The first run of `NAME` saves your description to `prompts/NAME.txt`, asks the LLM for a script,
-reviews it, and stores it in `functions/`. Later runs just execute the cached script. If the
+reviews it, and stores it in `functions/` (only one build per command: switching language
+replaces the old one). Later runs just execute the cached script. If the
 prompt is newer than the script (after `--edit` or a manual change), the script is rebuilt on the
 next run. A `--rebuild` that fails or is rejected keeps the previous script.
 

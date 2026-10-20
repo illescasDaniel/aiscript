@@ -7,11 +7,21 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from aiscript import paths
+from aiscript import env, paths
 from aiscript.errors import AiscriptError
 
 
 def _command(path: Path, args: list[str]) -> list[str]:
+    if path.suffix == ".py":
+        if paths.is_project_main(path):  # project with dependencies: run in its venv
+            python = paths.venv_python(path.parent)
+            if not python.exists():
+                name = path.parent.name
+                raise AiscriptError(
+                    f"The environment of {name!r} is missing; run `aiscript --rebuild {name}`."
+                )
+            return [str(python), str(path), *args]
+        return [*env.python_command(), str(path), *args]
     if paths.is_windows():
         shell = shutil.which("pwsh") or "powershell"
         return [

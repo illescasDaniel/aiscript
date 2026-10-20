@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +27,7 @@ PRIVILEGE = "Privilege escalation"
 FILESYSTEM = "Filesystem"
 NETWORK = "Networking"
 REMOTE_EXEC = "Remote code execution"
+DEPENDENCIES = "Dependencies"
 
 _SYS_DIRS = r"(?:etc|usr|bin|sbin|boot|lib|lib32|lib64|var(?!/tmp\b)|opt)"
 _SEP = r"[^\n;|&]*"  # stay within one simple command
@@ -305,8 +307,11 @@ def _short(code: str, limit: int = 100) -> str:
     return code if len(code) <= limit else code[: limit - 1] + "…"
 
 
-def static_review(script: str, shell: str) -> ReviewResult:
-    """Regex scan; one reason per (category, line) match."""
+def static_review(script: str, language: str) -> ReviewResult:
+    """Static scan (regex for shells, ``ast`` for Python); one reason per (category, line)."""
+    if language == "python":
+        return _python_review(script)
+    shell = language
     if shell == "powershell":
         patterns = _PS
     elif shell == "bash":
@@ -327,17 +332,425 @@ def static_review(script: str, shell: str) -> ReviewResult:
 
 
 # --------------------------------------------------------------------------- #
+# Python static scan (ast based)
+# --------------------------------------------------------------------------- #
+
+_PY_SYS = re.compile(
+    r"^/(?:etc|usr|bin|sbin|boot|lib|lib32|lib64|opt)(?:/|$)|^/var(?!/tmp(?:/|$))(?:/|$)"
+    r"|^/dev/(?:sd|hd|vd|nvme|mmcblk)|^[a-z]:/+(?:windows|program\s*files)",
+    re.IGNORECASE,
+)
+_PY_NET_FILE = re.compile(r"^/etc/(?:hosts|resolv\.conf)$|/drivers/etc/hosts$", re.IGNORECASE)
+_PY_DOWNLOAD = (
+    "urllib.request",
+    "urllib2",
+    "http.client",
+    "requests",
+    "httpx",
+    "urllib3",
+    "socket",
+    "aiohttp",
+    "ftplib",
+)
+_PY_SHELLS = {"sh", "bash", "zsh", "dash", "fish", "cmd", "powershell", "pwsh"}
+_PY_INTERPRETERS = _PY_SHELLS | {"python", "python2", "python3", "node", "perl", "ruby"}
+_PY_WINDOWS_CMDS = {"powershell", "pwsh", "cmd", "netsh", "reg", "schtasks", "runas", "sc"}
+_PY_PATH_CLASSES = {"Path", "PurePath", "PosixPath", "WindowsPath", "PurePosixPath"}
+_PY_SUBPROCESS = {
+    f"subprocess.{n}"
+    for n in ("run", "call", "check_call", "check_output", "Popen", "getoutput", "getstatusoutput")
+} | {"asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell"}
+_PY_REMOVE = {"os.remove", "os.unlink", "os.rmdir", "os.removedirs"}
+_PY_UNSAFE_LOADS = {
+    f"{mod}.{fn}"
+    for mod in ("pickle", "cPickle", "marshal", "dill", "cloudpickle")
+    for fn in ("load", "loads", "Unpickler")
+}
+_PY_SETID = {
+    f"os.{n}"
+    for n in ("setuid", "setgid", "seteuid", "setegid", "setreuid", "setregid", "setresuid")
+} | {"os.setresgid", "os.setgroups", "os.chroot"}
+_PY_DST_ONLY = {"shutil.copy", "shutil.copy2", "shutil.copyfile", "shutil.copytree"}
+_PY_ANY_ARG = {
+    "shutil.move",
+    "os.rename",
+    "os.replace",
+    "os.mkdir",
+    "os.makedirs",
+    "os.truncate",
+    "os.mkfifo",
+} | _PY_REMOVE
+_PY_SECOND_ARG = {"os.symlink", "os.link"}
+_PY_PATH_WRITE_METHODS = {
+    "write_text",
+    "write_bytes",
+    "touch",
+    "mkdir",
+    "rename",
+    "replace",
+    "symlink_to",
+    "hardlink_to",
+    "unlink",
+    "rmdir",
+    "chmod",
+}
+_PY_WINREG = {"SetValue", "SetValueEx", "DeleteKey", "DeleteKeyEx", "DeleteValue"}
+_PY_ORDER = {PRIVILEGE: 0, FILESYSTEM: 1, NETWORK: 2, REMOTE_EXEC: 3}
+
+
+def _str_value(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+class _PyScan(ast.NodeVisitor):
+    """Collects findings for one parsed Python script."""
+
+    def __init__(self, tree: ast.Module, lines: list[str]) -> None:
+        self.lines = lines
+        self.found: dict[tuple[str, int], None] = {}
+        self.loop = 0
+        self.downloads = False
+        self.dynamic_execs: list[ast.AST] = []
+        self.alias: dict[str, str] = {}
+        counts: dict[str, int] = {}
+        values: dict[str, ast.expr] = {}
+        tainted: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.asname:
+                        self.alias[a.asname] = a.name
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                for a in node.names:
+                    self.alias[a.asname or a.name] = f"{node.module}.{a.name}"
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        counts[t.id] = counts.get(t.id, 0) + 1
+                        values[t.id] = node.value
+            elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+                tainted.add(node.target.id)
+            elif (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.attr in ("append", "extend", "insert")
+            ):
+                tainted.add(node.value.id)
+        # Names assigned exactly once (and never mutated) are looked through.
+        self.values = {n: v for n, v in values.items() if counts[n] == 1 and n not in tainted}
+
+    # -- helpers -------------------------------------------------------------
+
+    def add(self, category: str, node: ast.AST) -> None:
+        self.found[(category, getattr(node, "lineno", 1))] = None
+
+    def qual(self, node: ast.AST) -> str | None:
+        """Fully-qualified dotted name, with import aliases resolved."""
+        if isinstance(node, ast.Name):
+            return self.alias.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            base = self.qual(node.value)
+            return f"{base}.{node.attr}" if base else None
+        return None
+
+    def resolve(self, node: ast.expr) -> ast.expr:
+        if isinstance(node, ast.Name):
+            return self.values.get(node.id, node)
+        return node
+
+    def literal(self, node: ast.expr) -> str | None:
+        node = self.resolve(node)
+        if (value := _str_value(node)) is not None:
+            return value
+        if self.qual(node) == "sys.executable":
+            return "python"
+        if isinstance(node, ast.Call) and self.qual(node.func) == "shutil.which" and node.args:
+            return _str_value(node.args[0])
+        return None
+
+    def path_of(self, node: ast.expr, depth: int = 0) -> str | None:
+        """Literal (prefix of a) path expression: 'x', Path('x'), Path('a') / 'b', f'/etc/{n}'."""
+        node = self.resolve(node)
+        if depth > 8:
+            return None
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.JoinedStr):
+            first = node.values[0] if node.values else None
+            return str(first.value) if isinstance(first, ast.Constant) else None
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Div, ast.Add, ast.Mod)):
+            left = self.path_of(node.left, depth + 1)
+            if left is not None and isinstance(node.op, ast.Div):
+                right = self.literal(node.right)
+                return left.rstrip("/\\") + "/" + right if right is not None else left
+            return left
+        if isinstance(node, ast.Call):
+            name = self.qual(node.func) or ""
+            tail = name.rsplit(".", 1)[-1]
+            if tail in _PY_PATH_CLASSES or name == "os.path.join":
+                parts = [self.literal(a) for a in node.args]
+                if parts and parts[0] is not None:
+                    return "/".join(p for p in parts if p is not None)
+        return None
+
+    def path_receiver(self, node: ast.expr) -> str | None:
+        """Literal path of a ``Path(...)`` / ``Path(...) / 'x'`` receiver (not of a plain str)."""
+        node = self.resolve(node)
+        if isinstance(node, (ast.Call, ast.BinOp)):
+            return self.path_of(node)
+        return None
+
+    def src_line(self, n: int) -> str:
+        return self.lines[n - 1].strip() if 0 < n <= len(self.lines) else ""
+
+    def system_path(self, node: ast.AST, path: str | None) -> None:
+        """FILESYSTEM (and NETWORK for hosts/resolv.conf) if path is a system location."""
+        if path is None:
+            return
+        norm = path.replace("\\", "/")
+        if _PY_SYS.search(norm):
+            self.add(FILESYSTEM, node)
+            if _PY_NET_FILE.search(norm):
+                self.add(NETWORK, node)
+
+    @staticmethod
+    def arg(node: ast.Call, index: int, keyword: str | None = None) -> ast.expr | None:
+        if index < len(node.args):
+            return node.args[index]
+        for kw in node.keywords:
+            if keyword and kw.arg == keyword:
+                return kw.value
+        return None
+
+    # -- visitors ------------------------------------------------------------
+
+    def _loop(self, node: ast.AST) -> None:
+        self.loop += 1
+        self.generic_visit(node)
+        self.loop -= 1
+
+    visit_For = visit_AsyncFor = visit_While = _loop
+    visit_ListComp = visit_SetComp = visit_DictComp = visit_GeneratorExp = _loop
+
+    def _import_names(self, node: ast.Import | ast.ImportFrom) -> list[str]:
+        if isinstance(node, ast.Import):
+            return [a.name for a in node.names]
+        mod = node.module or ""
+        return [mod] + [f"{mod}.{a.name}" for a in node.names]
+
+    def _imports(self, node: ast.Import | ast.ImportFrom) -> None:
+        for name in self._import_names(node):
+            root = name.split(".")[0]
+            if root in ("ctypes", "cffi"):
+                self.add(REMOTE_EXEC, node)  # native code is invisible to this scan
+            if any(name == m or name.startswith(m + ".") for m in _PY_DOWNLOAD):
+                self.downloads = True
+
+    visit_Import = visit_ImportFrom = _imports
+
+    def visit_Call(self, node: ast.Call) -> None:
+        self.check_call(node)
+        self.generic_visit(node)
+
+    def command(self, node: ast.expr) -> tuple[str, bool, bool, str]:
+        """``(literal text, built at run time, has non-literal parts, program)`` of a command."""
+        node = self.resolve(node)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            words = node.value.split()
+            return node.value, False, False, words[0] if words else ""
+        if isinstance(node, (ast.List, ast.Tuple)) and node.elts:
+            parts = [self.literal(e) for e in node.elts]
+            lits = [p for p in parts if p is not None]
+            prog = (parts[0] or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+            prog = prog.removesuffix(".exe")
+            dynamic = parts[0] is None
+            for i, part in enumerate(parts[:-1]):
+                if (
+                    prog in _PY_SHELLS
+                    and part is not None
+                    and part.lower() in ("-c", "/c", "-command", "-lc")
+                    and parts[i + 1] is None
+                ):
+                    dynamic = True
+            return " ".join(lits), dynamic, len(lits) != len(parts), prog
+        return "", True, True, ""
+
+    def scan_command(self, node: ast.AST, text: str) -> None:
+        words = text.split()
+        prog = (
+            words[0].replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe")
+            if words
+            else ""
+        )
+        patterns = _BASH + (_PS if prog in _PY_WINDOWS_CMDS else [])
+        seen: set[str] = set()
+        for category, regex, _label in patterns:
+            if category not in seen and regex.search(text):
+                seen.add(category)
+                self.add(category, node)
+
+    def check_call(self, node: ast.Call) -> None:
+        func = node.func
+        name = self.qual(func) or ""
+        attr = func.attr if isinstance(func, ast.Attribute) else None
+        tail = name.rsplit(".", 1)[-1]
+
+        # --- code execution / loading -------------------------------------
+        if name in (
+            "eval",
+            "exec",
+            "compile",
+            "builtins.eval",
+            "builtins.exec",
+            "builtins.compile",
+        ):
+            self.add(REMOTE_EXEC, node)
+            self.dynamic_execs.append(node)
+        elif name in ("__import__", "importlib.import_module", "importlib.__import__"):
+            if not (node.args and _str_value(node.args[0]) is not None):
+                self.add(REMOTE_EXEC, node)
+        elif name in _PY_UNSAFE_LOADS or name in ("runpy.run_path", "runpy.run_module"):
+            self.add(REMOTE_EXEC, node)
+        elif name.startswith(("ctypes.", "cffi.")):
+            self.add(REMOTE_EXEC, node)
+
+        # --- privilege ----------------------------------------------------
+        if name in _PY_SETID:
+            self.add(PRIVILEGE, node)
+        if tail.startswith("ShellExecute"):
+            values = [*node.args, *(kw.value for kw in node.keywords)]
+            if any((_str_value(v) or "").lower() == "runas" for v in values):
+                self.add(PRIVILEGE, node)
+
+        # --- processes ----------------------------------------------------
+        if name in ("os.system", "os.popen"):
+            self.add(REMOTE_EXEC, node)
+        if name in ("os.system", "os.popen") or name in _PY_SUBPROCESS:
+            self.check_command(node, name)
+        elif name.startswith(("os.exec", "os.spawn", "os.posix_spawn")):
+            texts = []
+            for a in node.args:
+                inner = a.elts if isinstance(a, (ast.List, ast.Tuple)) else [a]
+                texts += [t for t in map(self.literal, inner) if t is not None]
+            if texts:
+                self.scan_command(node, " ".join(texts))
+            else:
+                self.add(REMOTE_EXEC, node)
+
+        # --- filesystem ---------------------------------------------------
+        self.check_filesystem(node, name, attr, tail)
+
+    def check_command(self, node: ast.Call, name: str) -> None:
+        for kw in node.keywords:
+            if kw.arg == "shell" and not (
+                isinstance(kw.value, ast.Constant) and not kw.value.value
+            ):
+                self.add(REMOTE_EXEC, node)
+        cmd = self.arg(node, 0, "args") or self.arg(node, 0, "cmd")
+        if cmd is None:
+            self.add(REMOTE_EXEC, node)
+            return
+        text, dynamic, partial, prog = self.command(cmd)
+        if dynamic:
+            self.add(REMOTE_EXEC, node)  # command built at run time
+        if dynamic or (partial and prog in _PY_INTERPRETERS):
+            self.dynamic_execs.append(node)
+        if text:
+            self.scan_command(node, text)
+
+    def check_filesystem(self, node: ast.Call, name: str, attr: str | None, tail: str) -> None:
+        func = node.func
+        receiver = self.path_receiver(func.value) if isinstance(func, ast.Attribute) else None
+        first = self.arg(node, 0)
+        first_path = self.path_of(first) if first is not None else None
+
+        if name == "shutil.rmtree":
+            self.add(FILESYSTEM, node)
+        if name in _PY_REMOVE or attr in ("unlink", "rmdir"):
+            path = first_path if name in _PY_REMOVE else receiver
+            if self.loop or (path and _PY_SYS.search(path.replace("\\", "/"))):
+                self.add(FILESYSTEM, node)
+        if name in ("os.chown", "os.lchown", "shutil.chown"):
+            self.add(FILESYSTEM, node)
+        if name in ("os.chmod", "os.lchmod") or attr == "chmod":
+            path = first_path if name.startswith("os.") else receiver
+            mode = self.arg(node, 1 if name.startswith("os.") else 0, "mode")
+            world = (
+                isinstance(mode, ast.Constant)
+                and isinstance(mode.value, int)
+                and mode.value & 0o002
+            )
+            if self.loop or world:
+                self.add(FILESYSTEM, node)
+            self.system_path(node, path)
+
+        if name in ("open", "io.open", "builtins.open", "codecs.open") or attr == "open":
+            plain = name in ("open", "io.open", "builtins.open", "codecs.open")
+            mode = self.arg(node, 1 if plain else 0, "mode")
+            if set(_str_value(mode) or "") & set("wax+"):
+                self.system_path(node, first_path if plain else receiver)
+        elif attr in _PY_PATH_WRITE_METHODS and name not in _PY_ANY_ARG:
+            self.system_path(node, receiver)
+            if attr in ("rename", "replace") and first is not None:
+                self.system_path(node, self.path_of(first))
+        if name in _PY_ANY_ARG:
+            for a in node.args:
+                self.system_path(node, self.path_of(a))
+        elif name in _PY_DST_ONLY or name in _PY_SECOND_ARG:
+            dst = self.arg(node, 1, "dst")
+            if dst is not None:
+                self.system_path(node, self.path_of(dst))
+        elif name == "shutil.chown" or name in ("os.chown", "os.lchown"):
+            self.system_path(node, first_path)
+
+        mod = name.rsplit(".", 1)[0] if "." in name else ""
+        if mod in ("winreg", "_winreg") and (tail in _PY_WINREG or tail.startswith("CreateKey")):
+            self.add(FILESYSTEM, node)
+
+
+def _python_review(script: str) -> ReviewResult:
+    try:
+        tree = ast.parse(script)
+    except (SyntaxError, ValueError, RecursionError, MemoryError) as exc:
+        where = f" (line {exc.lineno})" if isinstance(exc, SyntaxError) and exc.lineno else ""
+        return ReviewResult(
+            True, [f"Unparseable Python{where}: cannot be analysed ({type(exc).__name__}: {exc})"]
+        )
+    lines = re.split(r"\r\n|\r|\n", script)
+    scan = _PyScan(tree, lines)
+    try:
+        scan.visit(tree)
+    except RecursionError:
+        return ReviewResult(True, ["Unparseable Python: nested too deeply to analyse"])
+    if scan.downloads:  # fetched data that then gets executed
+        for node in scan.dynamic_execs:
+            scan.add(REMOTE_EXEC, node)
+    reasons = [
+        f"{category} (line {n}): {_short(printable(scan.src_line(n)))}"
+        for category, n in sorted(scan.found, key=lambda k: (k[1], _PY_ORDER[k[0]]))
+    ]
+    return ReviewResult(bool(reasons), reasons)
+
+
+# --------------------------------------------------------------------------- #
 # LLM review
 # --------------------------------------------------------------------------- #
 
 _LLM_SYSTEM = (
-    "You are a security reviewer for shell scripts that were auto-generated and are "
-    "about to be run on the user's machine. Decide whether the script is risky. A "
+    "You are a security reviewer for scripts (Bash, PowerShell or Python) that were "
+    "auto-generated and are about to be run on the user's machine. Decide whether the "
+    "script is risky. A "
     "script is risky if it modifies the filesystem outside the user's working "
     "directory or home folder, deletes data irreversibly or in bulk, alters "
     "networking or firewall settings, escalates privileges, changes system or "
     "registry configuration, or downloads and executes remote code. Ordinary "
     "read-only commands and edits within the user's own scope are not risky. "
+    "The request also lists the third-party packages (from PyPI) the script declares "
+    "as dependencies. Well-known, reputable packages that the script plausibly needs "
+    "are fine; packages that look like typosquats of popular ones, that are obscure, or "
+    "that the script does not need are risky. "
     'Respond with strict JSON only, no prose: {"risky": true|false, "reasons": '
     '["short reason", ...]}. Use an empty reasons list when not risky.'
 )
@@ -361,13 +774,15 @@ def _parse_llm_json(text: str) -> dict[str, Any]:
 # review is a battery of yes/no (Noul) questions, one per hazard category.
 _JEV_QUESTIONS = {
     PRIVILEGE: (
-        "Does `script` escalate privileges, e.g. with sudo, su, doas, pkexec or RunAs?",
+        "Does `script` escalate privileges, e.g. with sudo, su, doas, pkexec or RunAs, including "
+        "Python code that calls os.setuid or runs sudo through subprocess?",
         "It runs commands with elevated privileges.",
         "It runs everything as the current user.",
     ),
     FILESYSTEM: (
         "Does `script` modify or delete files outside the user's working directory and home "
-        "folder, delete data recursively or in bulk, or change system configuration?",
+        "folder, delete data recursively or in bulk (rm -rf, shutil.rmtree), or "
+        "change system configuration?",
         "It changes system-wide files or settings, or deletes data in bulk.",
         "It only reads files, or changes files within the user's own scope.",
     ),
@@ -377,7 +792,8 @@ _JEV_QUESTIONS = {
         "It leaves networking configuration unchanged; ordinary requests are fine.",
     ),
     REMOTE_EXEC: (
-        "Does `script` download code from the internet and execute it?",
+        "Does `script` download code from the internet and execute it, e.g. curl | sh or Python "
+        "exec/eval/subprocess of downloaded data?",
         "It downloads and runs remote code.",
         "It does not execute downloaded code.",
     ),
@@ -385,7 +801,9 @@ _JEV_QUESTIONS = {
 JEV_THRESHOLD = 0.5
 
 
-def _jev_review(script: str, shell: str, p: ProviderConfig) -> ReviewResult:
+def _jev_review(
+    script: str, language: str, p: ProviderConfig, dependencies: Sequence[str]
+) -> ReviewResult:
     from typesafe_sdk import Noul, NoulCriteria, TypeSafeClient
 
     questions = {
@@ -395,7 +813,10 @@ def _jev_review(script: str, shell: str, p: ProviderConfig) -> ReviewResult:
     with TypeSafeClient(
         api_key=p.api_key, model=p.model, base_url=p.base_url, timeout=30.0
     ) as client:
-        response = client.system_one(state={"shell": shell, "script": script}, questions=questions)
+        response = client.system_one(
+            state={"language": language, "script": script, "dependencies": list(dependencies)},
+            questions=questions,
+        )
     reasons = [
         f"Jev review: {category} (p={answer.noul:.2f})"
         for category, answer in response.nouls.items()
@@ -404,18 +825,21 @@ def _jev_review(script: str, shell: str, p: ProviderConfig) -> ReviewResult:
     return ReviewResult(bool(reasons), reasons)
 
 
-def llm_review(script: str, shell: str, p: ProviderConfig) -> ReviewResult:
+def llm_review(
+    script: str, language: str, p: ProviderConfig, dependencies: Sequence[str] = ()
+) -> ReviewResult:
     """Ask the reviewer model; any failure fails closed (risky)."""
     if p.kind == "jev":
         try:
-            return _jev_review(script, shell, p)
+            return _jev_review(script, language, p, dependencies)
         except Exception as exc:  # noqa: BLE001 - fail closed on anything
             hint = " (is `ollaya serve` running?)" if is_local(p.base_url) else ""
             return ReviewResult(True, [f"Reviewer unavailable: {exc}{hint}"])
     try:
         from aiscript import llm
 
-        user = f"Shell: {shell}\n\nScript:\n{script}"
+        deps = ", ".join(dependencies) or "none"
+        user = f"Language: {language}\n\nDependencies: {deps}\n\nScript:\n{script}"
         raw = llm.chat(p, _LLM_SYSTEM, user)
         data = _parse_llm_json(raw)
         risky = data["risky"]
@@ -433,11 +857,21 @@ def llm_review(script: str, shell: str, p: ProviderConfig) -> ReviewResult:
         return ReviewResult(True, [f"Reviewer unavailable: {exc}"])
 
 
-def review(script: str, shell: str, reviewer: ProviderConfig | None) -> ReviewResult:
-    result = static_review(script, shell)
+def review(
+    script: str,
+    language: str,
+    reviewer: ProviderConfig | None,
+    dependencies: Sequence[str] = (),
+) -> ReviewResult:
+    result = static_review(script, language)
+    if dependencies:
+        result.reasons.append(
+            f"{DEPENDENCIES}: installs third-party packages from PyPI: {', '.join(dependencies)}"
+        )
+        result.risky = True
     if reviewer is None:
         return result
-    llm_result = llm_review(script, shell, reviewer)
+    llm_result = llm_review(script, language, reviewer, dependencies)
     return ReviewResult(result.risky or llm_result.risky, result.reasons + llm_result.reasons)
 
 

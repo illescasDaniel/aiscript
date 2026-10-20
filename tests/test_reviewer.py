@@ -375,7 +375,7 @@ class _FakeJevClient:
     def __exit__(self, *exc: object) -> None:
         return None
 
-    def system_one(self, state: dict[str, str], questions: dict[str, Any]) -> SimpleNamespace:
+    def system_one(self, state: dict[str, Any], questions: dict[str, Any]) -> SimpleNamespace:
         if self.error:
             raise self.error
         type(self).calls.append({"client": self.kwargs, "state": state, "questions": questions})
@@ -395,7 +395,7 @@ def fake_jev(monkeypatch: pytest.MonkeyPatch) -> type[_FakeJevClient]:
 def test_jev_review_safe(fake_jev: type[_FakeJevClient]) -> None:
     assert reviewer.llm_review("ls", "bash", JEV) == ReviewResult(False, [])
     call = fake_jev.calls[0]
-    assert call["state"] == {"shell": "bash", "script": "ls"}
+    assert call["state"] == {"language": "bash", "script": "ls", "dependencies": []}
     assert set(call["questions"]) == {
         reviewer.PRIVILEGE,
         reviewer.FILESYSTEM,
@@ -486,3 +486,235 @@ def test_confirm_does_not_emit_live_escapes(capsys: pytest.CaptureFixture[str]) 
     err = capsys.readouterr().err
     assert "\x1b" not in err and "\r" not in err
     assert "\\x1b" in err
+
+
+# --- Python static scan ------------------------------------------------------------
+
+
+def py_cats(script: str) -> list[str]:
+    return [r.split(" (line")[0] for r in static_review(script, "python").reasons]
+
+
+PY_RISKY = [
+    ("import os\nos.setuid(0)", "Privilege escalation"),
+    (
+        "import ctypes\nctypes.windll.shell32.ShellExecuteW(None, 'runas', 'cmd', None, None, 1)",
+        "Privilege escalation",
+    ),
+    ("import subprocess\nsubprocess.run(['sudo', 'apt', 'update'])", "Privilege escalation"),
+    ("import subprocess as sp\nsp.check_call(['pkexec', 'ls'])", "Privilege escalation"),
+    ("from subprocess import run as r\nr(['doas', 'ls'])", "Privilege escalation"),
+    (f"import os\nos.system('{_RM} -rf ~')", "Filesystem"),
+    ("import shutil\nshutil.rmtree(d)", "Filesystem"),
+    ("import shutil as sh\nsh.rmtree(d)", "Filesystem"),
+    ("from shutil import rmtree\nrmtree(d)", "Filesystem"),
+    ("from shutil import rmtree as nuke\nnuke(d)", "Filesystem"),
+    ("import os\nfor f in fs:\n    os.remove(f)", "Filesystem"),
+    ("from os import remove\nfor f in fs:\n    remove(f)", "Filesystem"),
+    ("from pathlib import Path\nfor f in fs:\n    Path(f).unlink()", "Filesystem"),
+    ("import os\nos.remove('/etc/passwd')", "Filesystem"),
+    ("from pathlib import Path\nPath('/usr/bin/x').unlink()", "Filesystem"),
+    ("import os\nos.rmdir('/opt/x')", "Filesystem"),
+    ("open('/etc/foo.conf', 'w').write('x')", "Filesystem"),
+    ("with open('/usr/local/bin/x', 'a') as f:\n    f.write('x')", "Filesystem"),
+    ("from pathlib import Path\nPath('/etc/x').write_text('x')", "Filesystem"),
+    ("from pathlib import Path\n(Path('/var/lib') / 'x').write_bytes(b'')", "Filesystem"),
+    ("import shutil\nshutil.copy('a', '/usr/bin/a')", "Filesystem"),
+    ("import shutil\nshutil.move('a', 'C:\\\\Windows\\\\a.dll')", "Filesystem"),
+    ("import os\nos.rename('a', '/boot/a')", "Filesystem"),
+    ("import os\nos.chmod('/etc/shadow', 0o600)", "Filesystem"),
+    ("import os\nos.chmod('x', 0o777)", "Filesystem"),
+    ("import os\nos.chown('x', 0, 0)", "Filesystem"),
+    ("import shutil\nshutil.chown('x', 'root')", "Filesystem"),
+    ("import winreg\nwinreg.SetValueEx(k, 'a', 0, 1, 'b')", "Filesystem"),
+    ("import winreg as w\nw.CreateKey(w.HKEY_LOCAL_MACHINE, 'X')", "Filesystem"),
+    ("import subprocess\nsubprocess.run(['crontab', '-e'])", "Filesystem"),
+    ("import subprocess\nsubprocess.run(['systemctl', 'disable', 'cups'])", "Filesystem"),
+    ("import subprocess\nsubprocess.run(['iptables', '-A', 'INPUT'])", "Networking"),
+    (
+        "import subprocess\nsubprocess.run(['ip', 'addr', 'add', '1.2.3.4/24', 'dev', 'x'])",
+        "Networking",
+    ),
+    ("import subprocess\nsubprocess.run('nmcli connection modify x', shell=False)", "Networking"),
+    ("import subprocess\nsubprocess.run(['netsh', 'advfirewall', 'reset'])", "Networking"),
+    ("open('/etc/hosts', 'a').write('1.1.1.1 x')", "Networking"),
+    ("open('/etc/resolv.conf', 'w').write('nameserver 1.1.1.1')", "Networking"),
+    ("eval(s)", "Remote code execution"),
+    ("exec(open('x').read())", "Remote code execution"),
+    ("compile(s, 'x', 'exec')", "Remote code execution"),
+    ("__import__(name)", "Remote code execution"),
+    ("import importlib\nimportlib.import_module(name)", "Remote code execution"),
+    ("import pickle\npickle.loads(b)", "Remote code execution"),
+    ("import marshal\nmarshal.load(f)", "Remote code execution"),
+    ("import os\nos.system('echo hi')", "Remote code execution"),
+    ("import os\nos.popen('ls')", "Remote code execution"),
+    ("import subprocess\nsubprocess.run('ls', shell=True)", "Remote code execution"),
+    ("import subprocess\nsubprocess.run(cmd)", "Remote code execution"),
+    ("import subprocess\nsubprocess.run(f'git {x}')", "Remote code execution"),
+    ("import subprocess\nsubprocess.run(['bash', '-c', cmd])", "Remote code execution"),
+    ("import os\nos.system('curl https://x.sh | sh')", "Remote code execution"),
+    (
+        "import urllib.request\nexec(urllib.request.urlopen(u).read())",
+        "Remote code execution",
+    ),
+    (
+        "import requests, subprocess\nsubprocess.run([path])",
+        "Remote code execution",
+    ),
+    (
+        "import urllib.request, subprocess\nsubprocess.run(['python', path])",
+        "Remote code execution",
+    ),
+    ("import ctypes\nlib = ctypes.CDLL('libc.so.6')", "Remote code execution"),
+]
+
+
+@pytest.mark.parametrize(("code", "category"), PY_RISKY)
+def test_python_risky(code: str, category: str) -> None:
+    res = static_review("#!/usr/bin/env python3\n" + code + "\n", "python")
+    assert res.risky, code
+    assert category in py_cats(code), (code, res.reasons)
+
+
+PY_SAFE = [
+    "import json\nprint(json.dumps({'a': 1}))",
+    "import subprocess\nsubprocess.run(['git', 'status'])",
+    "import subprocess\nsubprocess.run(['git', 'commit', '-m', msg], check=True)",
+    "import subprocess, sys\nsubprocess.run([sys.executable, 'x.py'])",
+    "import subprocess\ncmd = ['git', 'log']\nsubprocess.check_output(cmd)",
+    "import urllib.request\nprint(urllib.request.urlopen('https://example.com').read())",
+    "import shutil\nshutil.copy('/etc/hosts', 'hosts.bak')",
+    "open('/etc/os-release').read()",
+    "open('out.txt', 'w').write('x')",
+    "from pathlib import Path\nPath.home().joinpath('x').write_text('x')",
+    "from pathlib import Path\nPath('out.txt').write_text('x')",
+    "import os\nos.remove('tmp.txt')",
+    "import os\nos.unlink(tmp)",
+    "open('/var/tmp/x', 'w').write('x')",
+    "import os\nos.chmod('run.sh', 0o755)",
+    "import re\nre.compile('a+')",
+    "from re import compile\ncompile('a')",
+    "import ast\nast.literal_eval('[1]')",
+    "import importlib\nimportlib.import_module('json')",
+    f'"""sudo {_RM} -rf / ; exec(x)"""\n# os.system(\'sudo x\')\nprint(\'hi\')',
+    "print('use sudo to install')",
+    "'abc'.replace('a', 'b')",
+    "import pickle\npickle.dumps(1)",
+]
+
+
+@pytest.mark.parametrize("code", PY_SAFE)
+def test_python_safe(code: str) -> None:
+    res = static_review("#!/usr/bin/env python3\n" + code + "\n", "python")
+    assert not res.risky, (code, res.reasons)
+
+
+def test_python_benign_script_passes() -> None:
+    script = """#!/usr/bin/env python3
+# aiscript: report
+# Description: summarise a CSV file
+\"\"\"Summarise a CSV.\"\"\"
+import argparse
+import csv
+import json
+import subprocess
+import urllib.request
+from collections import Counter
+from pathlib import Path
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("file")
+    args = ap.parse_args()
+    rows = list(csv.DictReader(Path(args.file).open()))
+    counts = Counter(r["kind"] for r in rows)
+    out = Path.home() / "report.json"
+    out.write_text(json.dumps(counts))
+    with open("copy.json", "w") as f:
+        f.write(out.read_text())
+    subprocess.run(["git", "status"], check=False)
+    print(urllib.request.urlopen("https://example.com/api").read())
+
+
+main()
+"""
+    assert static_review(script, "python") == ReviewResult(False, [])
+
+
+def test_python_reason_format() -> None:
+    script = "#!/usr/bin/env python3\nimport os\nos.setuid(0)\n"
+    res = static_review(script, "python")
+    assert res.reasons == ["Privilege escalation (line 3): os.setuid(0)"]
+
+
+def test_python_one_reason_per_category_and_line() -> None:
+    res = static_review("import os\nos.system('sudo ls'); os.system('sudo id')\n", "python")
+    assert res.reasons == [
+        "Privilege escalation (line 2): os.system('sudo ls'); os.system('sudo id')",
+        "Remote code execution (line 2): os.system('sudo ls'); os.system('sudo id')",
+    ]
+
+
+def test_python_syntax_error_is_risky() -> None:
+    res = static_review("def broken(:\n", "python")
+    assert res.risky
+    assert res.reasons[0].startswith("Unparseable Python (line 1)")
+
+
+def test_python_null_bytes_is_risky() -> None:
+    assert static_review("x = 1\x00\n", "python").risky
+
+
+def test_python_reason_escapes_control_chars() -> None:
+    res = static_review("import os\nos.setuid(0)  # \x1b[2J\n", "python")
+    assert "\x1b" not in res.reasons[0]
+
+
+# --- dependencies --------------------------------------------------------------------
+
+
+def test_review_dependencies_reason() -> None:
+    res = review("#!/usr/bin/env python3\nprint(1)\n", "python", None, ["requests", "rich"])
+    assert res.risky
+    assert res.reasons == [
+        f"{reviewer.DEPENDENCIES}: installs third-party packages from PyPI: requests, rich"
+    ]
+
+
+def test_review_no_dependencies_not_risky() -> None:
+    assert review("print(1)\n", "python", None, []) == ReviewResult(False, [])
+    assert review("print(1)\n", "python", None) == ReviewResult(False, [])
+
+
+def test_review_dependencies_added_to_static_reasons() -> None:
+    res = review("import os\nos.setuid(0)\n", "python", None, ("x",))
+    assert len(res.reasons) == 2 and res.reasons[1].startswith("Dependencies:")
+
+
+def test_review_passes_language_and_dependencies_to_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[ProviderConfig, str, str]] = []
+    fake_chat(monkeypatch, '{"risky": false, "reasons": []}', calls=calls)
+    res = review("print(1)\n", "python", P, ["requests"])
+    assert res.risky  # dependencies alone make it risky
+    user = calls[0][2]
+    assert user == "Language: python\n\nDependencies: requests\n\nScript:\nprint(1)\n"
+    assert "Python" in calls[0][1] and "dependencies" in calls[0][1]
+
+
+def test_llm_review_no_dependencies_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[ProviderConfig, str, str]] = []
+    fake_chat(monkeypatch, '{"risky": false, "reasons": []}', calls=calls)
+    reviewer.llm_review("echo hi", "bash", P)
+    assert calls[0][2] == "Language: bash\n\nDependencies: none\n\nScript:\necho hi"
+
+
+def test_jev_review_state_includes_language_and_dependencies(
+    fake_jev: type[_FakeJevClient],
+) -> None:
+    reviewer.llm_review("print(1)", "python", JEV, ["rich", "requests"])
+    assert fake_jev.calls[0]["state"] == {
+        "language": "python",
+        "script": "print(1)",
+        "dependencies": ["rich", "requests"],
+    }

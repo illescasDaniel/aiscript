@@ -12,6 +12,9 @@ from aiscript.errors import AiscriptError
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
+# Language of a generated script. "bash"/"powershell" are the native shells.
+Language = Literal["bash", "powershell", "python"]
+
 
 def aiscript_home() -> Path:
     """Return the config root: $AISCRIPT_HOME, $XDG_CONFIG_HOME/aiscript, or ~/.config/aiscript."""
@@ -73,5 +76,56 @@ def prompt_path(name: str) -> Path:
     return prompts_dir() / f"{validate_command_name(name)}.txt"
 
 
+def project_dir(name: str) -> Path:
+    """Directory of a Python script with dependencies (main.py, .venv, lock files)."""
+    return functions_dir() / validate_command_name(name)
+
+
 def function_path(name: str) -> Path:
-    return functions_dir() / f"{validate_command_name(name)}.{script_ext()}"
+    """Existing artifact for ``name`` (project main.py, .py, native shell), else the shell path."""
+    validate_command_name(name)
+    for candidate in (
+        project_dir(name) / "main.py",
+        functions_dir() / f"{name}.py",
+        functions_dir() / f"{name}.{script_ext()}",
+    ):
+        if candidate.is_file():
+            return candidate
+    return functions_dir() / f"{name}.{script_ext()}"
+
+
+def function_target(name: str, language: Language, *, has_deps: bool) -> Path:
+    """Where a new build of ``name`` is written."""
+    if language == "python" and has_deps:
+        return project_dir(name) / "main.py"
+    ext = {"python": "py", "powershell": "ps1", "bash": "sh"}[language]
+    return functions_dir() / f"{validate_command_name(name)}.{ext}"
+
+
+def function_artifacts(name: str) -> list[Path]:
+    """Every existing artifact of ``name``: script files and the project dir."""
+    validate_command_name(name)
+    found = [p for ext in ("sh", "ps1", "py") if (p := functions_dir() / f"{name}.{ext}").is_file()]
+    project = project_dir(name)
+    if (project / "main.py").is_file():
+        found.append(project)
+    return found
+
+
+def language_of(path: Path) -> Language:
+    if path.suffix == ".py":
+        return "python"
+    if path.suffix == ".ps1":
+        return "powershell"
+    return "bash"
+
+
+def is_project_main(path: Path) -> bool:
+    """True for ``functions/<name>/main.py``, not a plain script of a command named ``main``."""
+    return path.name == "main.py" and path.parent.resolve() != functions_dir().resolve()
+
+
+def venv_python(project: Path) -> Path:
+    if is_windows():
+        return project / ".venv" / "Scripts" / "python.exe"
+    return project / ".venv" / "bin" / "python"

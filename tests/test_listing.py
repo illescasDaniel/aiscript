@@ -66,7 +66,7 @@ def test_list_table(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.Monk
     write(paths.prompt_path("bar"), "do bar", T)
     assert listing.list_commands() == 0
     out = capsys.readouterr().out.splitlines()
-    assert out[0].split() == ["NAME", "DESCRIPTION", "USAGE"]
+    assert out[0].split() == ["NAME", "LANG", "DESCRIPTION", "USAGE"]
     foo = next(line for line in out if line.startswith("foo"))
     bar = next(line for line in out if line.startswith("bar"))
     assert "Does foo things" in foo and "foo <a> [b]" in foo
@@ -124,3 +124,33 @@ def test_list_truncates_description(
     lines = capsys.readouterr().out.splitlines()
     assert any("…" in line for line in lines)
     assert all(len(line) <= 60 for line in lines)
+
+
+def test_list_mixed_languages(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COLUMNS", "120")
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    fdir = paths.functions_dir()
+    write(fdir / "a.sh", HEADER)
+    write(fdir / "b.py", HEADER.replace("bash", "python3"))
+    paths.project_dir("c").mkdir(parents=True)
+    write(paths.project_dir("c") / "main.py", HEADER)
+    paths.project_dir("empty").mkdir()  # no main.py: ignored
+    write(fdir / ".tmp.py", HEADER)  # temp entry: ignored
+    write(paths.prompt_path("d"), "x")
+    listing.list_commands()
+    rows = {line.split()[0]: line.split() for line in capsys.readouterr().out.splitlines()[1:]}
+    assert set(rows) == {"a", "b", "c", "d"}
+    assert rows["a"][1] == "sh"
+    assert rows["b"][1] == "py"
+    assert rows["c"][1] == "py+deps"
+    assert rows["d"][1] == "(not"  # blank LANG, then "(not built)"
+
+
+def test_list_stale_project(capsys: pytest.CaptureFixture[str]) -> None:
+    paths.project_dir("c").mkdir(parents=True)
+    write(paths.project_dir("c") / "main.py", HEADER, T)
+    write(paths.prompt_path("c"), "changed", T + SEC)
+    listing.list_commands()
+    assert "c *" in capsys.readouterr().out
