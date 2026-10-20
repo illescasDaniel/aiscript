@@ -335,6 +335,8 @@ def _toml_dependencies(content: str) -> object:
 
     match = re.search(r"^dependencies\s*=\s*\[", content, re.MULTILINE)
     if not match:
+        if re.search(r"^dependencies\s*=", content, re.MULTILINE):
+            raise AiscriptError("Invalid PEP 723 script block: 'dependencies' must be a list.")
         return []
     out: list[str] = []
     depth, quote, i = 1, "", match.end()
