@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "jevmem": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "jevmem>=0.4.0,<0.5",
+        "jevmem-mcp"
+      ]
+    },
+    "codenav": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "codenav-mcp>=0.2.1,<0.3",
+        "codenav-mcp"
+      ]
+    },
+    "webnav": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "webnav-ts-mcp@0.2"
+      ]
+    }
+  }
+}

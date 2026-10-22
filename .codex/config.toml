@@ -1,0 +1,11 @@
+[mcp_servers.jevmem]
+command = "uvx"
+args = ["--from", "jevmem>=0.4.0,<0.5", "jevmem-mcp"]
+
+[mcp_servers.codenav]
+command = "uvx"
+args = ["--from", "codenav-mcp>=0.2.1,<0.3", "codenav-mcp"]
+
+[mcp_servers.webnav]
+command = "npx"
+args = ["webnav-ts-mcp@0.2"]
