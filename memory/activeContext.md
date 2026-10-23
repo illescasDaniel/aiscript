@@ -6,7 +6,7 @@ _Last updated: 2026-10-23_
 
 ## Current focus
 
-User tested the Decisions reviewer successfully and authorized saving, committing, pushing and publishing version 1.2.0 on 2026-10-23. Release prepared: 664 tests pass, global Ruff lint/format and full mypy pass; wheel/sdist metadata and contents verified. Version fields and lockfile are 1.2.0. Existing manual Release workflow publishes PyPI and GitHub artifacts after main CI and pushed tag.
+Version 1.2.0 released on 2026-10-23. Feature/release commit `aaee1a965a0a1788c35fc52134d16c2a76dcb1bd` is pushed to main and tagged `v1.2.0`. CI and the Release workflow passed. PyPI and GitHub both contain the verified wheel and source archive.
 
 ## Blockers
 
@@ -14,14 +14,12 @@ None.
 
 ## Just changed
 
-- Verified the configured OpenAI Decisions reviewer with a live harmless-script request on 2026-10-23: `risky=False`, no reasons. Successful reviews are silent; cached command execution skips review.
-- Simplified starter YAML and matching README comments for OpenAI Decisions; moved its environment key guidance to the header. Configuration behavior is unchanged.
-- Implemented opt-in `api: decisions` reviewer, dedicated credentials and official endpoint, independent configurable model default and strict raw JSON validation.
-- Updated starter, README and configuration/safety docs; retained existing providers, risk confirmation and cached execution.
-- Saved independent PASS scorecard with 25-scenario mapping. No grader fixes required.
+- User confirmed successful testing and authorized commit, push and publication.
+- Release checks: 664 tests, global Ruff checks, full mypy across 29 files, package build/metadata checks.
+- Main CI: https://github.com/illescasDaniel/aiscript/actions/runs/39923130274 (all 11 jobs passed).
+- Release workflow: https://github.com/illescasDaniel/aiscript/actions/runs/39923344659 (passed).
+- Published: https://pypi.org/project/aiscript/1.2.0/ and https://github.com/illescasDaniel/aiscript/releases/tag/v1.2.0 . Wheel/sdist SHA256 values match between PyPI, GitHub asset digests and public downloads.
 
 ## Next steps
 
-1. Commit reviewed project changes, push main without force, and wait for CI success on that exact commit.
-2. Create/push `v1.2.0` tag and dispatch existing Release workflow with that tag.
-3. Verify PyPI/GitHub publication, record the outcome and commit/push final memory update. No force pushes or tag replacement.
+No remaining implementation or publication work. No tag replacement or further release dispatch is needed.
