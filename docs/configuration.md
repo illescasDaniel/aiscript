@@ -23,14 +23,15 @@ empty or missing, any name is accepted and settings come from environment variab
 | `api_key` | API key. Values ending in `...` (template placeholders) are ignored. |
 | `base_url` | Endpoint URL. `endpoint` is accepted as an alias. |
 | `model` | Model name. |
-| `api` | `responses` or `chat` (used by OpenAI-compatible providers). |
+| `api` | `responses` or `chat` for OpenAI-compatible text APIs; explicit `decisions` for an official OpenAI reviewer only. |
 | `reasoning_effort` | `none`, `low`, `medium`, `high`, `xhigh` or `max`. Sent only when set; support varies by model. |
 | `temperature` | Number. Sent only when set. |
 
 ### Kinds
 
-- **openai**: any OpenAI-compatible API (OpenAI, Ollama, vLLM, ...). Can be the generator or an
-  LLM-based reviewer (which returns a JSON verdict).
+- **openai**: an OpenAI-compatible text API (OpenAI, Ollama, vLLM, ...). Can be the generator or an
+  LLM-based reviewer (which returns a JSON verdict). Explicit `api: decisions` instead selects
+  the official OpenAI Decisions endpoint for review only.
 - **jev**: [Jev](https://docs.typesafe.ai) by TypeSafe AI, reached through the `typesafe-sdk`
   package. It is a classifier, not a chat model, so it can only be the `reviewer_provider`.
   `model` defaults to `jev-latest`; `base_url` defaults to the SDK's (`https://api.typesafe.ai`).
@@ -47,15 +48,58 @@ When the endpoint is OpenAI's own (no `base_url`, or host `api.openai.com`), the
 `responses` (the Responses API). Any other `base_url` defaults to `chat` (Chat Completions),
 since servers like Ollama usually implement only that. Set `api` explicitly to override.
 
+### OpenAI Decisions
+
+Decisions is an explicit reviewer option, independent of text-API inference. Add a separate
+entry to the existing `providers` mapping and select it:
+
+```yaml
+reviewer_provider: openai_decisions
+providers:
+  # Keep your existing generator entry here as well.
+  openai_decisions:
+    kind: openai
+    api: decisions
+    api_key: "..."
+    model: "gpt-6-luna"
+```
+
+The dedicated `api_key` field wins over `OPENAI_DECISIONS_API_KEY`. Blank keys and placeholders
+ending in `...` are ignored in both sources. There is no global `OPENAI_API_KEY` fallback or
+dummy key. For another provider name, the existing `<NAME>_API_KEY` normalization applies.
+Missing credentials produce a configuration error naming the permitted sources.
+
+When omitted, `model` defaults to `gpt-6-luna`, regardless of the generator model or
+`AISCRIPT_MODEL`. Explicit model names pass through so future supported models can be selected
+without changing aiscript. If OpenAI rejects a model, the review is treated as unavailable.
+
+Only `https://api.openai.com/v1` is supported. Omit `base_url` and `endpoint`, or set either to
+that exact URL with an optional trailing slash. Both aliases are checked if supplied; a
+canonical value cannot hide a custom value in the other field. Custom/local endpoints,
+insecure URLs, alternate paths, credentials in URLs, queries and fragments are rejected.
+`OPENAI_BASE_URL` does not redirect Decisions.
+
+Decisions requires `kind: openai` and can only be the reviewer. Selecting it for generation,
+combining it with Jev/Ollaya, or configuring `temperature`/`reasoning_effort` is an error.
+It makes one request with four predicates, a 30-second SDK transport timeout and zero retries;
+there is no fallback provider, new size limit, truncation, review cache or billing cap.
+
+The starter configuration keeps Jev selected and includes a commented Decisions example.
+To roll back, restore the previous reviewer selection before downgrading: older versions reject
+`api: decisions`. No script migration, dependency removal or re-review of cached scripts is needed.
+
 ### `reasoning_effort` and `temperature`
 
 Neither is sent unless you set it. GPT-6 models reject `temperature` unless `reasoning_effort`
 is `none`, and some reject `none` itself (for example GPT-6 Astra and GPT-6.1 Sol), so leave
 `temperature` unset for those.
 
+These settings apply to text APIs. A Decisions reviewer rejects either setting.
+
 ## API key resolution
 
-The first match wins:
+For existing text/Jev/Ollaya providers, the first match wins. Decisions uses the dedicated
+two-source rule [above](#openai-decisions).
 
 1. `api_key` in `config.yaml` (unless it ends in `...`)
 2. `<NAME>_API_KEY`, where `<NAME>` is the provider name uppercased with non-alphanumerics as `_`
@@ -73,6 +117,8 @@ only if the server was started with `OLLAYA_API_KEY`.
 
 ## Model resolution
 
+Decisions uses its explicit model or its independent `gpt-6-luna` default. Other providers use:
+
 1. `model` in the provider's YAML
 2. Generator only: `$AISCRIPT_MODEL`
 3. Defaults: `jevk5:4b` for Ollaya, `jev-latest` for Jev
@@ -89,6 +135,7 @@ only if the server was started with `OLLAYA_API_KEY`.
 | `AISCRIPT_MODEL` | Generator model when none is set in YAML |
 | `OPENAI_API_KEY` | Fallback key for an `openai`-kind generator |
 | `OPENAI_BASE_URL` | Fallback `base_url` for the generator |
+| `OPENAI_DECISIONS_API_KEY` | Key for a reviewer named `openai_decisions` when its YAML key is unset |
 | `TYPESAFE_API_KEY` | Fallback key for `jev` providers |
 | `OLLAYA_HOST` | Ollaya address (`host:port` or URL); default `http://localhost:11435` |
 | `OLLAYA_API_KEY` | Optional Ollaya key (sent as a Bearer token) |

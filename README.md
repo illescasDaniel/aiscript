@@ -9,7 +9,8 @@ on Windows) or Python when that fits better. Python scripts that need third-part
 their own virtual environment. The next run is instant:
 no network, no config. Before anything risky is saved or run, every generated script is checked
 by a built-in static scan and, optionally, by a decision model: [Jev](https://docs.typesafe.ai)
-by TypeSafe AI (hosted) or a local model served by [Ollaya](https://ollaya.dev). Risky scripts
+by TypeSafe AI (hosted), [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions),
+or a local model served by [Ollaya](https://ollaya.dev). Risky scripts
 are shown to you and need an explicit `[y/N]` approval.
 
 ## Install
@@ -72,7 +73,7 @@ Every generated script is reviewed **before it is saved**:
 - A **static regex scan** (always on) flags privilege escalation, recursive or system-wide file
   changes, networking/firewall changes and remote code execution (`curl | sh`, `iex`).
 - A **decision model** (`reviewer_provider`) gives a second opinion: **Jev** (hosted; key from
-  <https://console.typesafe.ai/keys>) or **Ollaya** (local and keyless; set
+  <https://console.typesafe.ai/keys>), **OpenAI Decisions** (see below), or **Ollaya** (local and keyless; set
   `reviewer_provider: ollaya`, default model `jevk5:4b` on `localhost:11435`; see
   <https://ollaya.dev>). Comment `reviewer_provider` out to use only the static scan.
 
@@ -87,7 +88,8 @@ a best-effort safety net, not a sandbox: read what you approve. Details: [docs/s
 
 ```yaml
 # aiscript config. Contains API keys: keep it private (chmod 600) and out of git.
-# Keys can also come from the environment: OPENAI_API_KEY, TYPESAFE_API_KEY, <PROVIDER>_API_KEY.
+# Keys can also come from the environment: OPENAI_API_KEY, OPENAI_DECISIONS_API_KEY,
+# TYPESAFE_API_KEY, <PROVIDER>_API_KEY.
 
 # Provider that writes the scripts (override with $AISCRIPT_PROVIDER).
 default_provider: openai
@@ -102,6 +104,13 @@ providers:
     api_key: "..."
     model: "gpt-6-luna"
     # reasoning_effort: low    # none | low | medium | high | xhigh | max (model-dependent)
+
+  # OpenAI Decisions API reviewer provider.
+  # openai_decisions:
+  #   kind: openai
+  #   api: decisions
+  #   api_key: "..."
+  #   model: "gpt-6-luna"
 
   # Jev (TypeSafe AI) safety reviewer. API key: https://console.typesafe.ai/keys
   jev:
@@ -120,6 +129,22 @@ providers:
 Placeholder keys (`"..."`) are ignored, so if you leave them, the environment variables above work as-is.
 All options (provider kinds, `api`, `temperature`, key and model resolution, every environment
 variable, the legacy `secrets.yaml`): [docs/configuration.md](docs/configuration.md).
+
+### OpenAI Decisions reviewer
+
+To use OpenAI Decisions instead of Jev, select `reviewer_provider: openai_decisions` and
+uncomment the corresponding provider block above. Supply its own `api_key`, or export
+`OPENAI_DECISIONS_API_KEY`; this named reviewer does not fall back to `OPENAI_API_KEY`.
+The default model is `gpt-6-luna`, and `model` remains configurable for future models.
+
+Decisions uses the official OpenAI endpoint only. One request checks the same four hazards,
+flagging probabilities **>= 0.5**. Requests use a 30-second transport timeout with zero retries.
+Errors, refusals and malformed answers require the existing risk confirmation; they are refused
+in noninteractive builds. Static findings and dependency warnings always remain effective.
+
+Existing reviewers and cached scripts keep working. To roll back, restore your previous
+`reviewer_provider` before downgrading aiscript. See [configuration](docs/configuration.md#openai-decisions)
+and [safety](docs/safety.md#openai-decisions) for the full contract.
 
 ## Usage
 

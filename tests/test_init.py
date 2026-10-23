@@ -175,3 +175,35 @@ def test_init_with_legacy_secrets_creates_nothing_new(capsys: pytest.CaptureFixt
     err = capsys.readouterr().err
     assert "mv" in err
     assert str(config_path()) in err
+
+
+def test_given_starter_config_when_decisions_example_is_uncommented_then_opt_in_is_explicit() -> (
+    None
+):
+    # given
+    active = yaml.safe_load(CONFIG_TEMPLATE)
+
+    # when
+    lines = CONFIG_TEMPLATE.splitlines()
+    example: list[str] = []
+    collecting = False
+    for line in lines:
+        if line.startswith("  # openai_decisions:"):
+            collecting = True
+        elif collecting and not line.startswith("  #   "):
+            break
+        if collecting:
+            example.append("  " + line[4:])
+    data = yaml.safe_load("providers:\n" + "\n".join(example) + "\n")
+
+    # then
+    assert active["reviewer_provider"] == "jev"
+    assert set(active["providers"]) == {"openai", "jev"}
+    assert data is not None
+    entry = data["providers"]["openai_decisions"]
+    assert entry["kind"] == "openai"
+    assert entry["api"] == "decisions"
+    assert entry["model"] == "gpt-6-luna"
+    assert "api_key" in entry
+    assert "OpenAI Decisions API reviewer provider." in CONFIG_TEMPLATE
+    assert "OPENAI_DECISIONS_API_KEY" in CONFIG_TEMPLATE.split("\n\n", 1)[0]

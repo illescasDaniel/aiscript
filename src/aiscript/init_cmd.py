@@ -18,7 +18,8 @@ from aiscript.paths import (
 
 CONFIG_TEMPLATE = """\
 # aiscript config. Contains API keys: keep it private (chmod 600) and out of git.
-# Keys can also come from the environment: OPENAI_API_KEY, TYPESAFE_API_KEY, <PROVIDER>_API_KEY.
+# Keys can also come from the environment: OPENAI_API_KEY, OPENAI_DECISIONS_API_KEY,
+# TYPESAFE_API_KEY, <PROVIDER>_API_KEY.
 
 # Provider that writes the scripts (override with $AISCRIPT_PROVIDER).
 default_provider: openai
@@ -33,6 +34,13 @@ providers:
     api_key: "..."
     model: "gpt-6-luna"
     # reasoning_effort: low    # none | low | medium | high | xhigh | max (model-dependent)
+
+  # OpenAI Decisions API reviewer provider.
+  # openai_decisions:
+  #   kind: openai
+  #   api: decisions
+  #   api_key: "..."
+  #   model: "gpt-6-luna"
 
   # Jev (TypeSafe AI) safety reviewer. API key: https://console.typesafe.ai/keys
   jev:

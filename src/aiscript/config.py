@@ -21,7 +21,7 @@ class ProviderConfig:
     base_url: str | None
     model: str
     kind: str = "openai"  # "openai" (OpenAI-compatible) or "jev" (TypeSafe System One; Ollaya too)
-    api: str = "chat"  # for kind "openai": "responses" or "chat" (completions)
+    api: str = "chat"  # for kind "openai": "responses", "chat", or reviewer-only "decisions"
     reasoning_effort: str | None = None  # sent only when set
     temperature: float | None = None  # sent only when set (GPT-6 rejects it unless effort=none)
 
@@ -34,11 +34,12 @@ class Settings:
 
 DEFAULT_PROVIDER = "openai"
 DEFAULT_MODEL = "gpt-6-luna"
+DECISIONS_DEFAULT_MODEL = "gpt-6-luna"
 JEV_DEFAULT_MODEL = "jev-latest"
 OLLAYA_DEFAULT_MODEL = "jevk5:4b"
 OLLAYA_DEFAULT_URL = "http://localhost:11435"
 _KINDS = {"openai", "jev", "ollaya"}
-_APIS = {"responses", "chat"}
+_APIS = {"responses", "chat", "decisions"}
 _OPENAI_HOSTS = {"api.openai.com"}
 _JEV_NAMES = {"jev", "typesafe"}
 _OLLAYA_NAMES = {"ollaya"}
@@ -157,6 +158,50 @@ def _resolve_provider(
             f"Provider '{name}' in {path} has unknown kind '{kind}' "
             "(expected: openai, jev, ollaya)."
         )
+    if (_clean(entry.get("api")) or "").lower() == "decisions":
+        if generator:
+            raise ConfigError(
+                f"Provider '{name}' in {path}: Decisions is only supported as a reviewer. "
+                "Select it with `reviewer_provider` and use another generator."
+            )
+        if kind != "openai":
+            raise ConfigError(f"Provider '{name}' in {path}: Decisions requires kind 'openai'.")
+        for setting in ("temperature", "reasoning_effort"):
+            if setting in entry:
+                raise ConfigError(
+                    f"Provider '{name}' in {path}: {setting} is not supported by Decisions. "
+                    "Remove that setting."
+                )
+
+        official_url = "https://api.openai.com/v1"
+        for alias in ("base_url", "endpoint"):
+            if alias in entry and _clean(entry[alias]) not in (official_url, official_url + "/"):
+                raise ConfigError(
+                    f"Provider '{name}' in {path}: Decisions {alias} must be "
+                    f"{official_url} (an optional trailing slash is accepted)."
+                )
+
+        api_key = None
+        env_name = _env_key_name(name)
+        for candidate in (entry.get("api_key"), os.environ.get(env_name)):
+            cleaned_key = _clean(candidate)
+            if cleaned_key is not None and not cleaned_key.endswith("..."):
+                api_key = cleaned_key
+                break
+        if api_key is None:
+            raise ConfigError(
+                f"No API key for provider '{name}'. Set `api_key` for it in {path} "
+                f"or export {env_name}; Decisions requires a dedicated reviewer credential."
+            )
+        return ProviderConfig(
+            name=name,
+            api_key=api_key,
+            base_url=official_url,
+            model=_clean(entry.get("model")) or DECISIONS_DEFAULT_MODEL,
+            kind="openai",
+            api="decisions",
+        )
+
     # Ollaya speaks the Jev wire protocol: only its defaults differ, so it becomes kind "jev".
     ollaya = kind == "ollaya"
     if ollaya:
@@ -222,7 +267,8 @@ def _resolve_provider(
     )
     if api not in _APIS:
         raise ConfigError(
-            f"Provider '{name}' in {path} has unknown api '{api}' (expected: responses, chat)."
+            f"Provider '{name}' in {path} has unknown api '{api}' "
+            "(expected: responses, chat, decisions)."
         )
     reasoning_effort = _clean(entry.get("reasoning_effort"))
     temperature = entry.get("temperature")

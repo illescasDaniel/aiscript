@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.0] - 2026-10-23
+
+- Add OpenAI Decisions as an opt-in safety reviewer alongside Jev and Ollaya, using
+  `kind: openai` and `api: decisions`.
+- Default the Decisions reviewer to `gpt-6-luna` while retaining a configurable model name.
+  Use a dedicated reviewer API key and the official OpenAI endpoint only.
+- Evaluate the four existing hazards in one request with strict response validation, a
+  30-second transport timeout and zero retries. Preserve static findings, dependency warnings
+  and the existing confirmation behavior when review fails or detects risk.
+- Include a commented starter configuration and document setup, safety behavior and rollback.
+
 ## [1.1.0] - 2026-10-20
 
 - The model can now write Python as well as the native shell, choosing per command; "in python"

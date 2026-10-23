@@ -366,3 +366,227 @@ def test_remote_generator_uses_openai_env_key(monkeypatch: pytest.MonkeyPatch) -
         'default_provider: remote\nproviders:\n  remote: {base_url: "https://api.example.com/v1"}\n'
     )
     assert load_settings().generator.api_key == "sk-env"
+
+
+def _write_decisions_config(
+    fields: str = "api_key: reviewer-yaml", *, name: str = "openai_decisions"
+) -> None:
+    write_config(
+        f"reviewer_provider: {name}\nproviders:\n"
+        "  openai: {api_key: generator-key, model: generator-model}\n"
+        f"  {name}: {{kind: openai, api: decisions, {fields}}}\n"
+    )
+
+
+@pytest.mark.parametrize("model", [None, "future-decisions-model-2099"])
+@pytest.mark.parametrize("generator_model", [None, "generator-env-model"])
+def test_given_decisions_model_when_settings_resolve_then_model_is_independent(
+    monkeypatch: pytest.MonkeyPatch, model: str | None, generator_model: str | None
+) -> None:
+    # given
+    generator_fields = "api_key: generator-key"
+    if generator_model is not None:
+        monkeypatch.setenv("AISCRIPT_MODEL", generator_model)
+    else:
+        generator_fields += ", model: generator-model"
+    reviewer_fields = "kind: openai, api: decisions, api_key: reviewer-yaml"
+    if model is not None:
+        reviewer_fields += f", model: {model}"
+    write_config(
+        "reviewer_provider: openai_decisions\nproviders:\n"
+        f"  openai: {{{generator_fields}}}\n"
+        f"  openai_decisions: {{{reviewer_fields}}}\n"
+    )
+
+    # when
+    settings = load_settings()
+
+    # then
+    reviewer = need(settings.reviewer)
+    assert reviewer.model == (model or "gpt-6-luna")
+    assert (reviewer.name, reviewer.kind, reviewer.api) == (
+        "openai_decisions",
+        "openai",
+        "decisions",
+    )
+    assert settings.generator == ProviderConfig(
+        name="openai",
+        api_key="generator-key",
+        base_url=None,
+        model=generator_model or "generator-model",
+        api="responses",
+    )
+
+
+@pytest.mark.parametrize(
+    ("role", "kind", "name", "message"),
+    [
+        ("generator", "openai", "openai_decisions", "reviewer"),
+        ("reviewer", "jev", "openai_decisions", "openai"),
+        ("reviewer", "ollaya", "openai_decisions", "openai"),
+        ("reviewer", None, "jev", "openai"),
+        ("reviewer", None, "ollaya", "openai"),
+    ],
+)
+def test_given_decisions_invalid_role_or_kind_when_settings_resolve_then_config_error(
+    role: str, kind: str | None, name: str, message: str
+) -> None:
+    # given
+    kind_field = f"kind: {kind}, " if kind else ""
+    selection = f"default_provider: {name}" if role == "generator" else f"reviewer_provider: {name}"
+    write_config(
+        f"{selection}\nproviders:\n  openai: {{api_key: generator-key}}\n"
+        f"  {name}: {{{kind_field}api: decisions, api_key: reviewer-yaml}}\n"
+    )
+
+    # when / then
+    with pytest.raises(ConfigError) as error:
+        load_settings()
+    assert message in str(error.value).lower()
+    assert name in str(error.value)
+    assert "unknown api" not in str(error.value).lower()
+
+
+@pytest.mark.parametrize("setting", ["temperature: 0", "temperature: 0.7", "reasoning_effort: low"])
+def test_given_decisions_generation_setting_when_settings_resolve_then_config_error(
+    setting: str,
+) -> None:
+    # given
+    _write_decisions_config(f"api_key: reviewer-yaml, {setting}")
+
+    # when / then
+    with pytest.raises(ConfigError) as error:
+        load_settings()
+    assert setting.split(":")[0] in str(error.value)
+    assert "openai_decisions" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "endpoints",
+    [
+        "",
+        "base_url: 'https://api.openai.com/v1'",
+        "base_url: 'https://api.openai.com/v1/'",
+        "endpoint: 'https://api.openai.com/v1'",
+        "endpoint: 'https://api.openai.com/v1/'",
+        "base_url: 'https://api.openai.com/v1', endpoint: 'https://api.openai.com/v1/'",
+    ],
+)
+def test_given_decisions_official_endpoint_when_settings_resolve_then_canonical_url_is_pinned(
+    monkeypatch: pytest.MonkeyPatch, endpoints: str
+) -> None:
+    # given
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://environment.invalid/v1")
+    _write_decisions_config(f"api_key: reviewer-yaml, {endpoints}")
+
+    # when
+    settings = load_settings()
+
+    # then
+    assert need(settings.reviewer).base_url == "https://api.openai.com/v1"
+    assert settings.generator.base_url == "https://environment.invalid/v1"
+
+
+@pytest.mark.parametrize("alias", ["base_url", "endpoint"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:11434/v1",
+        "https://custom.invalid/v1",
+        "http://api.openai.com/v1",
+        "not-a-url",
+        "https://api.openai.com/v2",
+        "https://api.openai.com/v1?redirect=elsewhere",
+        "https://api.openai.com/v1#fragment",
+        "https://user:password@api.openai.com/v1",
+        "https://api.openai.com.evil.invalid/v1",
+    ],
+)
+def test_given_decisions_disallowed_endpoint_when_settings_resolve_then_config_error(
+    alias: str, url: str
+) -> None:
+    # given
+    _write_decisions_config(f"api_key: reviewer-yaml, {alias}: '{url}'")
+
+    # when / then
+    with pytest.raises(ConfigError) as error:
+        load_settings()
+    assert "https://api.openai.com/v1" in str(error.value)
+    assert "openai_decisions" in str(error.value)
+
+
+@pytest.mark.parametrize("canonical_alias", ["base_url", "endpoint"])
+@pytest.mark.parametrize(
+    "hidden_url",
+    ["http://localhost:11434/v1", "https://custom.invalid/v1", "not-a-url"],
+)
+def test_given_decisions_conflicting_aliases_when_settings_resolve_then_neither_bypasses_validation(
+    canonical_alias: str, hidden_url: str
+) -> None:
+    # given
+    other_alias = "endpoint" if canonical_alias == "base_url" else "base_url"
+    _write_decisions_config(
+        f"api_key: reviewer-yaml, {canonical_alias}: 'https://api.openai.com/v1', "
+        f"{other_alias}: '{hidden_url}'"
+    )
+
+    # when / then
+    with pytest.raises(ConfigError) as error:
+        load_settings()
+    assert "https://api.openai.com/v1" in str(error.value)
+    assert "openai_decisions" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("yaml_key", "expected"),
+    [
+        ("reviewer-yaml", "reviewer-yaml"),
+        ("", "reviewer-env"),
+        ("   ", "reviewer-env"),
+        ("sk-proj-...", "reviewer-env"),
+        ("sk-...", "reviewer-env"),
+        ("xyz...", "reviewer-env"),
+    ],
+)
+@pytest.mark.parametrize("name", ["openai_decisions", "custom-review"])
+def test_given_decisions_keys_when_settings_resolve_then_dedicated_precedence_is_used(
+    monkeypatch: pytest.MonkeyPatch, yaml_key: str, expected: str, name: str
+) -> None:
+    # given
+    monkeypatch.setenv("OPENAI_API_KEY", "global-key")
+    env_name = "CUSTOM_REVIEW_API_KEY" if name == "custom-review" else "OPENAI_DECISIONS_API_KEY"
+    monkeypatch.setenv(env_name, "reviewer-env")
+    _write_decisions_config(f"api_key: '{yaml_key}'", name=name)
+
+    # when
+    reviewer = need(load_settings().reviewer)
+
+    # then
+    assert reviewer.api_key == expected
+    assert reviewer.name == name
+
+
+@pytest.mark.parametrize("source", ["yaml", "environment"])
+@pytest.mark.parametrize("key", [None, "", "   ", "sk-proj-...", "sk-...", "xyz..."])
+def test_given_decisions_no_usable_dedicated_key_when_settings_resolve_then_credential_error(
+    monkeypatch: pytest.MonkeyPatch, source: str, key: str | None
+) -> None:
+    # given
+    monkeypatch.setenv("OPENAI_API_KEY", "global-key")
+    monkeypatch.delenv("OPENAI_DECISIONS_API_KEY", raising=False)
+    fields = ""
+    if key is not None:
+        if source == "yaml":
+            fields = f"api_key: '{key}'"
+        else:
+            monkeypatch.setenv("OPENAI_DECISIONS_API_KEY", key)
+    _write_decisions_config(fields)
+
+    # when / then
+    with pytest.raises(ConfigError) as error:
+        load_settings()
+    message = str(error.value)
+    assert "No API key" in message
+    assert "api_key" in message
+    assert "OPENAI_DECISIONS_API_KEY" in message
+    assert "openai_decisions" in message

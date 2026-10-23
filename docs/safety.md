@@ -66,6 +66,35 @@ The questions are:
 
 Requests have a 30 second timeout.
 
+### OpenAI Decisions
+
+Select an OpenAI provider with explicit `api: decisions` to use
+[OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) instead of Jev.
+See the [configuration example](configuration.md#openai-decisions). It defaults to `gpt-6-luna`
+and accepts a configured model name for future supported models. It is reviewer-only and
+uses the official OpenAI endpoint; custom endpoints are rejected.
+
+One request sends the generated script, its language and its dependencies as data, with one
+fixed predicate for each hazard listed above. The instructions tell the model to treat script
+content as untrusted data. The reviewer does not execute code or fetch URLs from that input.
+It does not add local files, environment dumps or runtime arguments to the payload.
+
+All four named answers must be present exactly once and be predicates with finite numeric
+probabilities in [0, 1]. Booleans, strings, duplicate/missing/unknown names and refusals
+invalidate the entire model assessment. Validation uses raw JSON values to avoid SDK numeric
+coercion. Categories at **>= 0.5** are flagged, using the unrounded probability. A safe model
+answer never clears static findings or dependency warnings.
+
+The client uses a 30-second transport timeout and zero retries, with no provider fallback or
+truncation. This timeout is not a strict end-to-end deadline. Errors, input-limit rejection,
+refusals and invalid responses mark the script risky with a concise diagnostic; raw provider
+payloads and credentials are excluded from diagnostics. Explicit interactive approval still
+permits continuation after reviewer failure. Noninteractive risky builds are refused.
+
+There is no review cache or application billing cap. Rebuilding can make another request;
+already-cached execution continues without review. The common 0.5 threshold is a policy choice,
+not a claim that different model families have equivalent calibration or safety.
+
 ### Ollaya (local)
 
 [Ollaya](https://ollaya.dev) runs the same kind of decision model on your machine, with no key and
@@ -84,7 +113,7 @@ unreachable, the review fails closed and the message asks whether `ollaya serve`
 
 ### OpenAI-compatible reviewer
 
-A provider of kind `openai` can also be the reviewer. It is asked for a strict JSON verdict
+A provider of kind `openai` using `responses` or `chat` can also be the reviewer. It is asked for a strict JSON verdict
 (`{"risky": ..., "reasons": [...]}`) using the same API settings as a generator.
 
 ## Fail closed
@@ -119,6 +148,9 @@ nothing is saved. If stdin is not a terminal, risky scripts are refused outright
 - **Review**: with Jev (hosted), the generated script, its language and its dependency list are
   sent to TypeSafe AI.
   Use `reviewer_provider: ollaya` (local) or leave it unset to keep scripts on your machine.
+- **OpenAI Decisions review** sends that same script, language and dependency list to
+  `https://api.openai.com/v1/decisions`, using the selected reviewer's dedicated key. No retention
+  guarantee is implied by this integration.
 - Nothing is sent when you run an already-cached command.
 - API keys live in `config.yaml` (mode 600) or environment variables, and are never logged.
   A provider with a plain `http://` non-local `base_url` triggers a warning, since the key

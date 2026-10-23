@@ -193,3 +193,100 @@ def test_failed_project_install_keeps_old_build(
     with pytest.raises(AiscriptError, match="pip failed"):
         builder.build("hi", settings)
     assert old.read_text() == SAFE
+
+
+@pytest.mark.parametrize("answer", ["noninteractive", "n", "", "maybe", "eof", "interrupt"])
+def test_given_risky_rebuild_when_cancelled_then_previous_script_and_installs_are_untouched(
+    settings: Settings, fake_llm: FakeLLM, monkeypatch: pytest.MonkeyPatch, answer: str
+) -> None:
+    # given
+    write_prompt("hi")
+    old = paths.functions_dir() / "hi.py"
+    old.write_text(PY)
+    fake_llm.script, fake_llm.dependencies = PY, ["requests"]
+    installs: list[object] = []
+    monkeypatch.setattr(pysetup, "install", lambda *args: installs.append(args))
+    monkeypatch.setattr(
+        reviewer,
+        "llm_review",
+        lambda *args: reviewer.ReviewResult(True, ["OpenAI Decisions review unavailable"]),
+    )
+    settings = Settings(
+        generator=settings.generator,
+        reviewer=ProviderConfig(
+            "openai_decisions", "key", None, "gpt-6-luna", kind="openai", api="decisions"
+        ),
+    )
+
+    class ConfirmationInput:
+        def isatty(self) -> bool:
+            return answer != "noninteractive"
+
+        def readline(self) -> str:
+            if answer == "eof":
+                return ""
+            if answer == "interrupt":
+                raise KeyboardInterrupt
+            return answer + "\n"
+
+    monkeypatch.setattr(sys, "stdin", ConfirmationInput())
+
+    # when
+    with pytest.raises(AiscriptError, match="Script rejected; nothing saved."):
+        builder.build("hi", settings)
+
+    # then
+    assert installs == []
+    assert old.read_text() == PY
+    assert list(paths.functions_dir().iterdir()) == [old]
+
+
+@pytest.mark.parametrize("answer", ["y", "yes"])
+def test_given_unavailable_review_when_user_explicitly_approves_then_build_is_saved(
+    settings: Settings, fake_llm: FakeLLM, monkeypatch: pytest.MonkeyPatch, answer: str
+) -> None:
+    # given
+    write_prompt("hi")
+    monkeypatch.setattr(
+        reviewer,
+        "llm_review",
+        lambda *args: reviewer.ReviewResult(True, ["OpenAI Decisions review unavailable"]),
+    )
+    settings = Settings(
+        generator=settings.generator,
+        reviewer=ProviderConfig(
+            "openai_decisions", "key", None, "gpt-6-luna", kind="openai", api="decisions"
+        ),
+    )
+    monkeypatch.setattr(sys, "stdin", TTY(answer))
+
+    # when
+    result = builder.build("hi", settings)
+
+    # then
+    assert result.read_text() == SAFE
+
+
+def test_given_safe_review_when_stdin_is_noninteractive_then_build_does_not_prompt(
+    settings: Settings, fake_llm: FakeLLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # given
+    write_prompt("hi")
+    monkeypatch.setattr(reviewer, "llm_review", lambda *args: reviewer.ReviewResult(False, []))
+    settings = Settings(
+        generator=settings.generator,
+        reviewer=ProviderConfig(
+            "openai_decisions", "key", None, "gpt-6-luna", kind="openai", api="decisions"
+        ),
+    )
+
+    def unexpected_prompt(*args: object) -> NoReturn:
+        pytest.fail("Safe noninteractive builds must not ask for confirmation")
+
+    monkeypatch.setattr("builtins.input", unexpected_prompt)
+
+    # when
+    result = builder.build("hi", settings)
+
+    # then
+    assert result.read_text() == SAFE

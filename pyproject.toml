@@ -1,6 +1,6 @@
 [project]
 name = "aiscript"
-version = "1.1.0"
+version = "1.2.0"
 description = "JIT-compile plain-English intents into cached, reviewed shell or Python scripts via an LLM."
 readme = "README.md"
 license = "MIT"
