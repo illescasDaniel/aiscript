@@ -12,10 +12,10 @@
 - [x] Implement feature and address first independent review's test gaps.
 - [x] Complete quality gate and independent grade after two fix rounds.
 - [x] Verify README PATH guidance and pass the fresh independent grade.
-- [ ] Verify direct invocation and locking on Windows.
+- [x] Verify direct invocation and locking on Windows CI.
 - [x] Complete architecture, tests, implementation, and independent grade through the project gates.
 - [x] Prepare 1.3.0 and pass local release checks.
-- [ ] Commit and push release; verify CI including Windows.
+- [ ] Fix macOS test failure, push and verify release CI.
 - [ ] Obtain explicit authorization for v1.3.0, publish and upgrade the existing uv tool.
 
 ## OpenAI Decisions reviewer

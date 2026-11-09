@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -68,10 +69,14 @@ def test_given_readme_setup_when_followed_then_path_and_shebang_examples_work(
         f"{bin_dir / 'pipx'} ensurepath",
     ]
 
-    # The documented absolute path is an example; substitute the installed interpreter path.
-    shebang = absolute.group(1).replace(absolute.group(1)[2:], str(interpreter))
-    prompt = tmp_path / "biggest"
-    prompt.write_text(f"{shebang}\nList folders.\n", encoding="utf-8")
-    prompt.chmod(0o755)
-    result = subprocess.run([str(prompt)], env=env, capture_output=True, text=True, check=True)
-    assert result.stdout == f"interpreter:{prompt}\n"
+    # Keep the interpreter path short for macOS shebang limits, and use a real
+    # executable instead of relying on recursive script interpreters.
+    with tempfile.TemporaryDirectory(prefix="aiscript-", dir="/tmp") as short_dir:
+        short_interpreter = Path(short_dir) / "aiscript"
+        short_interpreter.symlink_to("/bin/sh")
+        shebang = absolute.group(1).replace(absolute.group(1)[2:], str(short_interpreter))
+        prompt = tmp_path / "biggest"
+        prompt.write_text(f'{shebang}\nprintf "interpreter:%s\\n" "$0"\n', encoding="utf-8")
+        prompt.chmod(0o755)
+        result = subprocess.run([str(prompt)], env=env, capture_output=True, text=True, check=True)
+        assert result.stdout == f"interpreter:{prompt}\n"

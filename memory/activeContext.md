@@ -10,13 +10,13 @@ Preparing aiscript 1.3.0 release for executable prompt scripts. Release checks p
 
 ## Blockers
 
-Windows execution awaits the release commit's Windows CI run.
+Release CI passed Windows and Linux but failed macOS because the README shebang test uses an overly long temporary interpreter path. Fix the test and rerun CI before release.
 
 ## Just changed
 
 - Added file-mode runtime, documentation and scenario tests; addressed the first independent review.
-- Prepared 1.3.0 metadata and changelog; full release checks passed.
+- Committed and pushed 1.3.0 release preparation as d9d2ecd; local checks pass. Windows CI passes; macOS CI failed the README shebang test.
 
 ## Next steps
 
-Commit and push release changes, verify CI, obtain explicit v1.3.0 authorization, publish and upgrade the installed uv tool.
+Fix macOS test, push and verify CI; obtain explicit v1.3.0 authorization, publish and upgrade the installed uv tool.
