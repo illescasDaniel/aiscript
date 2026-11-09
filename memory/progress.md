@@ -1,5 +1,23 @@
 # Progress
 
+## Executable prompt scripts
+
+- [x] Draft Phase 0 design for shebang execution and PATH guidance.
+- [x] Obtain design approval.
+- [x] Validate both Mermaid diagrams with the pinned Mermaid CLI.
+- [x] Agree Phase 1 decisions and draft specification; spec check passes.
+- [x] Obtain specification approval.
+- [x] Draft Phase 2 interfaces and architecture plan.
+- [x] Obtain architecture approval.
+- [x] Implement feature and address first independent review's test gaps.
+- [x] Complete quality gate and independent grade after two fix rounds.
+- [x] Verify README PATH guidance and pass the fresh independent grade.
+- [ ] Verify direct invocation and locking on Windows.
+- [x] Complete architecture, tests, implementation, and independent grade through the project gates.
+- [x] Prepare 1.3.0 and pass local release checks.
+- [ ] Commit and push release; verify CI including Windows.
+- [ ] Obtain explicit authorization for v1.3.0, publish and upgrade the existing uv tool.
+
 ## OpenAI Decisions reviewer
 
 ### Done

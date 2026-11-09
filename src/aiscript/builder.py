@@ -38,16 +38,21 @@ def _read_intent(name: str) -> str:
     return intent
 
 
-def build(name: str, settings: Settings) -> Path:
-    """Generate, review and atomically write the script for ``name``."""
-    intent = _read_intent(name)
+def generate_reviewed(name: str, intent: str, settings: Settings) -> llm.GeneratedScript:
+    """Generate a program and require the existing safety review before returning it."""
     gen = settings.generator
     print(f"Generating {name!r} with {gen.name}/{gen.model}...", file=sys.stderr)
     script = llm.generate_script(gen, name, intent)
-
     result = reviewer.review(script.code, script.language, settings.reviewer, script.dependencies)
     if not reviewer.confirm(script.code, result):
         raise AiscriptError("Script rejected; nothing saved.")
+    return script
+
+
+def build(name: str, settings: Settings) -> Path:
+    """Generate, review and atomically write the script for ``name``."""
+    intent = _read_intent(name)
+    script = generate_reviewed(name, intent, settings)
 
     paths.ensure_dirs()
     if script.dependencies:

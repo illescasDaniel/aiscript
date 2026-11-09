@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0] - 2026-11-09
+
+- Run natural-language prompt files directly or as executable Unix scripts with
+  `#!/usr/bin/env aiscript`, forwarding arguments, streams and exit status.
+- Cache reviewed builds by source path and prompt content, with safe concurrent builds and
+  rebuilds when the prompt changes. Keep existing named commands and their caches working.
+- Document installation PATH setup, executable prompt files and file-cache cleanup.
+
 ## [1.2.0] - 2026-10-23
 
 - Add OpenAI Decisions as an opt-in safety reviewer alongside Jev and Ollaya, using

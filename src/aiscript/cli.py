@@ -8,8 +8,9 @@ import shlex
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
-from aiscript import __version__, builder, paths
+from aiscript import __version__, builder, paths, prompt_file
 from aiscript.config import load_settings
 from aiscript.errors import AiscriptError
 from aiscript.init_cmd import run_init
@@ -18,6 +19,7 @@ from aiscript.runner import run_script
 
 _HELP = """\
 usage: aiscript NAME [args...]       run a command (created/built on first use)
+       aiscript PATH [args...]       run a prompt file specified by path
        aiscript --init               create config dir and config.yaml template
        aiscript --list               list commands
        aiscript --edit NAME          edit a command's prompt (rebuilds on next run)
@@ -131,6 +133,8 @@ def _dispatch(argv: list[str]) -> int:
     if not argv:
         sys.stderr.write(_HELP)
         return 2
+    if os.sep in argv[0] or (os.altsep is not None and os.altsep in argv[0]):
+        return prompt_file.execute(Path(argv[0]), argv[1:], load_settings)
     if argv[0].startswith("-"):
         try:
             ns = _build_parser().parse_args(argv)

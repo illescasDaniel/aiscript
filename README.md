@@ -25,6 +25,20 @@ pip install aiscript
 
 Requires Python 3.10+.
 
+On Linux or macOS, check that the installed command is on your `PATH`:
+
+```sh
+command -v aiscript
+```
+
+If it is not found, use your installer's PATH setup: `uv tool update-shell` for uv, or
+`pipx ensurepath` for pipx. These commands update shell configuration when you run them; open a
+new terminal for the changes to take effect. With pip, add the directory containing its installed
+`aiscript` executable to your PATH using your shell's configuration. See the
+[uv tool documentation](https://docs.astral.sh/uv/concepts/tools/) and
+[pipx installation guide](https://pipx.pypa.io/latest/how-to/install-pipx.html) for details.
+Installing aiscript itself does not edit shell profiles.
+
 To upgrade to the latest version, use the same tool you installed with:
 
 ```sh
@@ -65,6 +79,46 @@ aiscript sizes ~/Downloads --top 5   # later runs: cached, arguments passed stra
 
 Everything after the command name is passed untouched to the script (including `--help`).
 `aiscript` messages go to stderr; stdout belongs to the script, and the exit code is the script's.
+
+## Executable prompt files
+
+On Linux and macOS, write a UTF-8 file named `biggest`:
+
+```text
+#!/usr/bin/env aiscript
+List the largest folders inside the directory given as the first argument.
+```
+
+Make it executable and run it with a directory:
+
+```sh
+chmod +x biggest
+./biggest ~/Downloads
+```
+
+`/usr/bin/env` finds `aiscript` on `PATH`. Alternatively, use its absolute path in the shebang,
+for example `#!/home/alex/.local/bin/aiscript`. The operating system does not expand `$HOME` or
+`~` in a shebang.
+
+You can also run a prompt file directly with `aiscript ./biggest ~/Downloads`; a shebang is
+optional in this form. On Windows, use direct invocation with an explicit path, for example
+`aiscript .\biggest Downloads`; Unix shebang execution is not supported there. The path must
+include a path separator: a bare name such as `biggest` selects the existing named-command
+workflow, even when a file with that name exists. Quote paths or arguments containing spaces.
+Arguments after the path, including flags, are passed through unchanged, as are the program's
+standard input, output and exit status.
+
+The first run generates and reviews a script using the same safety checks as named commands.
+Risky builds require approval and are refused when standard input is non-interactive. Later
+runs reuse a matching reviewed build without calling a model; changing the prompt rebuilds and
+reviews it. A changed shebang alone does not trigger a rebuild. If rebuilding fails or is
+rejected, aiscript keeps the old build but does not execute it for the changed prompt.
+File builds are stored separately from named commands under `~/.config/aiscript/file-cache/`
+(or `$XDG_CONFIG_HOME/aiscript/file-cache/`, or `$AISCRIPT_HOME/file-cache/`). Paths resolving
+to the same file share a cache; moving the file creates a new entry. Historical versions are
+retained. To reclaim their space, remove the file-cache directory only when no prompt-file
+invocation is using it; the next run will rebuild and review its script. Named-command
+management options such as `--remove` do not manage this cache.
 
 ## Safety review / decision models
 
@@ -151,6 +205,7 @@ and [safety](docs/safety.md#openai-decisions) for the full contract.
 | Command | Action |
 |---|---|
 | `aiscript NAME [args...]` | Run a command; created and built on first use |
+| `aiscript PATH [args...]` | Run a prompt file using an explicit path |
 | `aiscript --init` | Create config dirs and a `config.yaml` template (never overwrites) |
 | `aiscript --list` | Table of commands, descriptions and usage (`*` = prompt changed, will rebuild) |
 | `aiscript --edit NAME` | Open the prompt in `$VISUAL` / `$EDITOR` (fallback nano/vi, notepad on Windows) |
@@ -185,6 +240,7 @@ why in the script header). `aiscript --list` shows each command's language.
 ~/.config/aiscript/          # or $XDG_CONFIG_HOME/aiscript, or $AISCRIPT_HOME
 ├── config.yaml              # providers and keys
 ├── prompts/<name>.txt       # your intent for each command
+├── file-cache/              # reviewed builds for prompt files
 └── functions/
     ├── <name>.sh            # generated, reviewed scripts (.ps1 on Windows)
     ├── <name>.py            # standard-library Python

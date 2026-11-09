@@ -1,4 +1,4 @@
-_Last updated: 2026-10-23_
+_Last updated: 2026-11-09_
 
 ## Branch
 
@@ -6,20 +6,17 @@ _Last updated: 2026-10-23_
 
 ## Current focus
 
-Version 1.2.0 released on 2026-10-23. Feature/release commit `aaee1a965a0a1788c35fc52134d16c2a76dcb1bd` is pushed to main and tagged `v1.2.0`. CI and the Release workflow passed. PyPI and GitHub both contain the verified wheel and source archive.
+Preparing aiscript 1.3.0 release for executable prompt scripts. Release checks passed: 694 tests, Ruff, mypy, spec and isolated wheel smoke. The GitHub PyPI environment now requires owner review. Next commit and push the release, verify CI including Windows, then obtain explicit authorization for v1.3.0 before tagging and dispatching the release. The existing system installation is uv tool 1.1.0 and should be upgraded after publication.
 
 ## Blockers
 
-None.
+Windows execution awaits the release commit's Windows CI run.
 
 ## Just changed
 
-- User confirmed successful testing and authorized commit, push and publication.
-- Release checks: 664 tests, global Ruff checks, full mypy across 29 files, package build/metadata checks.
-- Main CI: https://github.com/illescasDaniel/aiscript/actions/runs/39923130274 (all 11 jobs passed).
-- Release workflow: https://github.com/illescasDaniel/aiscript/actions/runs/39923344659 (passed).
-- Published: https://pypi.org/project/aiscript/1.2.0/ and https://github.com/illescasDaniel/aiscript/releases/tag/v1.2.0 . Wheel/sdist SHA256 values match between PyPI, GitHub asset digests and public downloads.
+- Added file-mode runtime, documentation and scenario tests; addressed the first independent review.
+- Prepared 1.3.0 metadata and changelog; full release checks passed.
 
 ## Next steps
 
-No remaining implementation or publication work. No tag replacement or further release dispatch is needed.
+Commit and push release changes, verify CI, obtain explicit v1.3.0 authorization, publish and upgrade the installed uv tool.

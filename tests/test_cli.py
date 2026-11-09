@@ -71,10 +71,16 @@ def test_unknown_and_conflicting_flags() -> None:
     assert cli.main(["--list", "--init"]) == 2
 
 
-@pytest.mark.parametrize("bad", ["../x", "a/b", ".hidden", "a b"])
+@pytest.mark.parametrize("bad", [".hidden", "a b"])
 def test_invalid_names(bad: str, capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main([bad]) == 1
     assert "aiscript: error: Invalid command name" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("path", ["../x", "a/b"])
+def test_missing_paths_are_file_errors(path: str, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main([path]) == 1
+    assert "aiscript: error: Cannot read prompt file" in capsys.readouterr().err
 
 
 def test_new_command_flow(
