@@ -15,10 +15,13 @@ import pytest
 def test_given_readme_setup_when_followed_then_path_and_shebang_examples_work(
     tmp_path: Path,
 ) -> None:
-    # given: the actual installation and prompt-file guidance from the README
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
-    install = readme.split("## Install", 1)[1].split("## Quickstart", 1)[0]
-    prompt_files = readme.split("## Executable prompt files", 1)[1].split("## Safety review", 1)[0]
+    # given: the README links to installation and prompt-file guidance
+    root = Path(__file__).resolve().parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    assert "](docs/installation.md)" in readme
+    assert "](docs/prompt-files.md)" in readme
+    install = (root / "docs/installation.md").read_text(encoding="utf-8")
+    prompt_files = (root / "docs/prompt-files.md").read_text(encoding="utf-8")
     availability = re.search(r"```sh\s*\n(command -v [^\n]+)\n```", install)
     assert availability is not None, "README must show how to check command availability"
     setups = re.findall(r"`((?:uv tool update-shell|pipx ensurepath))`\s+for\s+(uv|pipx)", install)

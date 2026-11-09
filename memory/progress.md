@@ -15,8 +15,8 @@
 - [x] Verify direct invocation and locking on Windows CI.
 - [x] Complete architecture, tests, implementation, and independent grade through the project gates.
 - [x] Prepare 1.3.0 and pass local release checks.
-- [ ] Fix macOS test failure, push and verify release CI.
-- [ ] Obtain explicit authorization for v1.3.0, publish and upgrade the existing uv tool.
+- [x] Fix macOS test failure, push and verify release CI across all platforms.
+- [x] Obtain explicit authorization for v1.3.0, publish and upgrade the existing uv tool.
 
 ## OpenAI Decisions reviewer
 

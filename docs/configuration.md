@@ -1,8 +1,56 @@
 # Configuration reference
 
 aiscript reads `config.yaml` from its config directory (see [Locations](#locations)). Run
-`aiscript --init` to create a starter file (see the [README](../README.md#configuration)).
+`aiscript --init` to create a starter file.
 With no file at all, the generator works from `OPENAI_API_KEY` alone.
+
+## Starter configuration
+
+`aiscript --init` writes this starter `~/.config/aiscript/config.yaml` (mode 600; keep it out of git):
+
+```yaml
+# aiscript config. Contains API keys: keep it private (chmod 600) and out of git.
+# Keys can also come from the environment: OPENAI_API_KEY, OPENAI_DECISIONS_API_KEY,
+# TYPESAFE_API_KEY, <PROVIDER>_API_KEY.
+
+# Provider that writes the scripts (override with $AISCRIPT_PROVIDER).
+default_provider: openai
+
+# Decision model that reviews scripts on top of the built-in static scan.
+# Use `ollaya` for a local, keyless review; comment out to use only the static scan.
+reviewer_provider: jev
+
+providers:
+  # OpenAI (or any OpenAI-compatible API). API key: https://platform.openai.com/api-keys
+  openai:
+    api_key: "..."
+    model: "gpt-6-luna"
+    # reasoning_effort: low    # none | low | medium | high | xhigh | max (model-dependent)
+
+  # OpenAI Decisions API reviewer provider.
+  # openai_decisions:
+  #   kind: openai
+  #   api: decisions
+  #   api_key: "..."
+  #   model: "gpt-6-luna"
+
+  # Jev (TypeSafe AI) safety reviewer. API key: https://console.typesafe.ai/keys
+  jev:
+    api_key: "..."
+
+  # Uses Ollaya for a local decision model (https://ollaya.dev), model example: jevk5:4b
+  # ollaya:
+  #   model: "jevk5:4b"
+
+  # Uses Ollama for a local LLM to create the scripts (set `default_provider: ollama`)
+  # ollama:
+  #   base_url: "http://localhost:11434/v1"
+  #   model: "qwen3"
+```
+
+Placeholder keys (`"..."`) are ignored, so environment variables can supply them instead.
+See [OpenAI Decisions](#openai-decisions) and [safety](safety.md#openai-decisions) for its full
+review contract.
 
 ## Top-level keys
 
