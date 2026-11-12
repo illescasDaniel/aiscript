@@ -1,5 +1,20 @@
 # Progress
 
+## AI inside generated scripts (1.4.0)
+
+- [x] Architect proposal and user decisions agreed in chat (2026-11-12).
+- [x] Phase 0 design page drafted: `sdd/ai-in-scripts.html` (2026-11-12).
+- [x] Design approval (2026-11-12).
+- [x] Spec drafted in the page (2026-11-12).
+- [x] Spec approval (2026-11-12).
+- [x] Architecture drafted in the page (2026-11-12).
+- [x] Architecture approval (2026-11-12).
+- [x] Tests (565 new, failed for right reasons) and implementation; gate green (1314 tests).
+- [x] QA: 25/25 scenarios. Grade round 1: NEEDS WORK (G1-G14); G1-G4, G6-G10, G12 fixed.
+- [x] G5 fixed (store=false on official Chat, user-approved); M2 real OpenAI call OK (schema call, exit 0).
+- [ ] Open: M1/M3 manual checks, re-grade skipped by user, nothing committed.
+- [ ] (follow-up feature) native Anthropic/Gemini providers.
+
 ## Executable prompt scripts
 
 - [x] Draft Phase 0 design for shebang execution and PATH guidance.

@@ -33,7 +33,7 @@ def announced_lock(path):
         yield
 prompt_file._lock = announced_lock
 cli.load_settings = lambda: Settings(ProviderConfig("fake", "key", None, "m"), None)
-llm.generate_script = lambda provider, name, intent: llm.GeneratedScript(
+llm.generate_script = lambda provider, name, intent, **kw: llm.GeneratedScript(
     "import sys\\nprint('child args:', repr(sys.argv[1:]))\\n", "python", []
 )
 sys.exit(cli.main([sys.argv[1], "space value", "--flag"]))

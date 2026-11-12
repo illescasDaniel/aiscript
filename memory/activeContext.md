@@ -1,4 +1,4 @@
-_Last updated: 2026-11-09_
+_Last updated: 2026-11-12_
 
 ## Branch
 
@@ -6,19 +6,12 @@ _Last updated: 2026-11-09_
 
 ## Current focus
 
-aiscript 1.3.0 is published on PyPI and GitHub, and the existing uv tool installation has been upgraded from 1.1.0 to 1.3.0. Tag v1.3.0 points to 7d9c33a. CI run 42655913160 and release run 42656605769 passed; PyPI and GitHub wheel and source archive checksums match.
+1.4.0 "AI inside generated scripts" is built, QA'd (25/25), graded (round 1 NEEDS WORK, fixes applied, not re-graded by the user's choice) and being released. Page: `sdd/ai-in-scripts.html`.
 
 ## Blockers
 
-None.
-
-## Just changed
-
-- Added file-mode runtime, documentation and scenario tests; addressed the first independent review.
-- Fixed the macOS shebang test in 7d9c33a; full CI passed.
-- Published 1.3.0 through the approved PyPI environment and verified the system command reports 1.3.0.
-- Shortened the README and moved installation, prompt-file and usage details into linked docs; the example now shows the plain-English file directly.
+None. Manual checks not done: M1 (strict schema on a non-OpenAI server), M3 (Windows PowerShell 5.1).
 
 ## Next steps
 
-No remaining release or installation work.
+Publish 1.4.0. Then the follow-up feature: native Anthropic/Gemini providers (user-requested). Image generation is deferred to 1.5.0.

@@ -326,3 +326,74 @@ def test_remove_project_dir_and_other_artifacts(capsys: pytest.CaptureFixture[st
     assert not project.exists() and not py.exists()
     assert not paths.prompt_path("proj").exists()
     assert str(project) in capsys.readouterr().err
+
+
+KEY = "Zq7Lm2Xv9Rt4Wk8Pn3Yc6Hd5Jb"
+
+
+def test_help_mentions_ai_flags(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["--help"]) == 0
+    err = capsys.readouterr().err
+    for flag in ("--ask", "--data-description", "--schema", "--check-secrets"):
+        assert flag in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--list", "--data-description", "d"],
+        ["--list", "--schema", "{}"],
+        ["--schema", "{}"],
+        ["--data-description", "d"],
+        ["--check-secrets", "--data-description", "d"],
+    ],
+)
+def test_data_description_or_schema_without_ask_is_usage_error(argv: list[str]) -> None:
+    assert cli.main(argv) == 2
+
+
+def test_ask_without_data_description_is_usage_error() -> None:
+    assert cli.main(["--ask", "summarise"]) == 2
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--check-secrets", "--list"],
+        ["--check-secrets", "--init"],
+        ["--check-secrets", "--ask", "t", "--data-description", "d"],
+        ["--check-secrets", "--rebuild", "x"],
+        ["--check-secrets", "--version"],
+    ],
+)
+def test_check_secrets_is_exclusive_with_other_commands(argv: list[str]) -> None:
+    assert cli.main(argv) == 2
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_check_secrets_dispatches_to_sweep_and_returns_its_code(
+    code: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli.sweep, "check_secrets", lambda: code)
+    assert cli.main(["--check-secrets"]) == code
+
+
+def test_given_key_in_first_use_answer_when_named_command_then_refused_before_saving(
+    gen: FakeLLM, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # given
+    monkeypatch.setattr(
+        cli,
+        "load_settings",
+        lambda: Settings(ProviderConfig("fake", KEY, None, "m"), None, known_secrets=(KEY,)),
+    )
+    say(monkeypatch, f"call the api with {KEY}")
+    # when
+    code = cli.main(["echo"])
+    # then
+    err = capsys.readouterr().err
+    assert code == 1
+    assert KEY not in err
+    assert gen.calls == []
+    assert not paths.prompt_path("echo").exists()
+    assert list(paths.prompts_dir().iterdir()) == []

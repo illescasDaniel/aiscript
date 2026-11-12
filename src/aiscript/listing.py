@@ -7,7 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from aiscript import paths
+from aiscript import paths, reviewer
 from aiscript.errors import AiscriptError
 
 _HEADER_LINES = 40
@@ -68,12 +68,20 @@ def _command_names() -> list[str]:
 
 
 def _lang(fpath: Path) -> str:
-    """LANG column: sh, ps1, py or py+deps (project dir); blank when not built."""
+    """LANG column: sh, ps1, py or py+deps (project dir), plus ``+ai``; blank when not built."""
     if not fpath.exists():
         return ""
-    if paths.is_project_main(fpath):
-        return "py+deps"
-    return fpath.suffix.lstrip(".")
+    kind = "py+deps" if paths.is_project_main(fpath) else fpath.suffix.lstrip(".")
+    return f"{kind}+ai" if _uses_ai(fpath, kind) else kind
+
+
+def _uses_ai(fpath: Path, kind: str) -> bool:
+    language = {"ps1": "powershell", "sh": "bash"}.get(kind, "python")
+    try:
+        script = fpath.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return reviewer.uses_ai(script, language)
 
 
 def list_commands() -> int:

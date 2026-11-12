@@ -154,3 +154,61 @@ def test_list_stale_project(capsys: pytest.CaptureFixture[str]) -> None:
     write(paths.prompt_path("c"), "changed", T + SEC)
     listing.list_commands()
     assert "c *" in capsys.readouterr().out
+
+
+SH_AI = (
+    "#!/usr/bin/env bash\n# Description: ai\n"
+    "aiscript --ask 'summarise' --data-description 'text' < in\n"
+)
+PY_AI = (
+    "#!/usr/bin/env python3\n# Description: ai\nimport aiscript\n"
+    "print(aiscript.ask('summarise', 'x', 'text'))\n"
+)
+PS_AI = "# Description: ai\naiscript --ask 'summarise' --data-description 'text'\n"
+
+
+def list_rows(capsys: pytest.CaptureFixture[str]) -> dict[str, list[str]]:
+    listing.list_commands()
+    lines = capsys.readouterr().out.splitlines()[1:]
+    return {line.split()[0]: line.split() for line in lines}
+
+
+def test_given_ai_and_plain_builds_when_listing_then_only_ai_kinds_gain_marker(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # given
+    monkeypatch.setenv("COLUMNS", "120")
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    fdir = paths.functions_dir()
+    write(fdir / "a.sh", SH_AI)
+    write(fdir / "b.py", PY_AI)
+    paths.project_dir("c").mkdir(parents=True)
+    write(paths.project_dir("c") / "main.py", PY_AI)
+    write(fdir / "plain.sh", HEADER)
+    write(fdir / "plainpy.py", HEADER.replace("bash", "python3"))
+    paths.project_dir("deps").mkdir(parents=True)
+    write(paths.project_dir("deps") / "main.py", HEADER)
+    # when
+    rows = list_rows(capsys)
+    # then
+    assert rows["a"][1] == "sh+ai"
+    assert rows["b"][1] == "py+ai"
+    assert rows["c"][1] == "py+deps+ai"
+    assert rows["plain"][1] == "sh"
+    assert rows["plainpy"][1] == "py"
+    assert rows["deps"][1] == "py+deps"
+
+
+def test_given_powershell_ai_build_when_listing_then_kind_is_ps1_plus_ai(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # given
+    monkeypatch.setenv("COLUMNS", "120")
+    monkeypatch.setattr("platform.system", lambda: "Windows")
+    write(paths.functions_dir() / "w.ps1", PS_AI)
+    write(paths.functions_dir() / "p.ps1", "# Description: plain\nWrite-Host hi\n")
+    # when
+    rows = list_rows(capsys)
+    # then
+    assert rows["w"][1] == "ps1+ai"
+    assert rows["p"][1] == "ps1"

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.4.0] - 2026-11-12
+
+- Let generated scripts call the configured `default_provider` model through `aiscript.ask`
+  (Python) or `aiscript --ask` (shell), returning text or schema-validated JSON, without the
+  script ever holding the API key. Distinct exit codes 2-9 (and 127 for Python when `aiscript`
+  is not on PATH) with matching `AskError` exceptions.
+- Add an optional `ai:` config block (`max_input_kb`, `max_calls_per_run`, `timeout_seconds`,
+  `max_output_tokens`). Existing configuration, caches and reviewers are unchanged.
+- Scan prompts and generated code for API keys and refuse the build with no override; add
+  `aiscript --check-secrets` to sweep existing builds. Scripts that use AI always need
+  interactive confirmation, and credential access is flagged. `--list` marks them `+ai`.
+- AI scripts send their input to the provider on every run; see the updated Privacy notes.
+- Not included: image generation is deferred; native Anthropic and Gemini support is planned
+  next, with no date.
+
 ## [1.3.0] - 2026-11-09
 
 - Run natural-language prompt files directly or as executable Unix scripts with

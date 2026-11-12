@@ -116,6 +116,26 @@ unreachable, the review fails closed and the message asks whether `ollaya serve`
 A provider of kind `openai` using `responses` or `chat` can also be the reviewer. It is asked for a strict JSON verdict
 (`{"risky": ..., "reasons": [...]}`) using the same API settings as a generator.
 
+## AI use and secrets
+
+- **Secret scans**: your prompt is scanned for API keys before the generator sees it, and the
+  generated code before any reviewer sees it. Both refuse the build with no override, naming the
+  line but never the value. The scan covers configured keys and `sk-` style provider key patterns in
+  raw, joined, reversed, ROT13, base64/hex/percent-decoded, folded Python string and shell-escape
+  forms. Out-of-order fragments under 12 characters and computed transforms cannot be caught.
+  `aiscript --check-secrets` runs the scan over existing builds.
+- **AI-use confirmation**: a script that calls the model is always risky and needs an interactive
+  yes naming the provider and model; non-interactive builds are refused.
+- **Credential access** (reading `*_API_KEY`/`*_TOKEN`, setting `OPENAI_BASE_URL` or `AISCRIPT_*`,
+  opening the aiscript config, calling an LLM host directly) is reported and can be overridden
+  interactively. Running `aiscript NAME`, `aiscript ./file` or `--rebuild` from a script is
+  reported as remote code execution; only `--ask` is exempt.
+- **Call cap**: the per-run limit uses a counter file the runner creates, so a script can tamper
+  with it. It guards against bugs and loops, not malicious shell scripts. A script runs as you
+  and could read `config.yaml` itself; aiscript is not a sandbox.
+- Model output is untrusted. Rolling back: rebuild or remove AI scripts before downgrading
+  (1.3.0 exits 2 on `--ask`).
+
 ## Fail closed
 
 If the reviewer errors, times out, is unreachable or returns an unparsable answer, the script is
@@ -151,7 +171,17 @@ nothing is saved. If stdin is not a terminal, risky scripts are refused outright
 - **OpenAI Decisions review** sends that same script, language and dependency list to
   `https://api.openai.com/v1/decisions`, using the selected reviewer's dedicated key. No retention
   guarantee is implied by this integration.
-- Nothing is sent when you run an already-cached command.
+- **AI calls inside scripts**: a script that uses `aiscript.ask` / `aiscript --ask` sends its task,
+  data description and input data to the `default_provider` on every run, so such cached scripts
+  are no longer offline. Use a local provider (for example Ollama) to keep that data on your
+  machine. Nothing else leaves the machine; there is no response cache or billing cap.
+- Otherwise nothing is sent when you run an already-cached command.
+- The API key is never given to a script: scripts call aiscript, and only that process reads the
+  key. aiscript is not a sandbox, though: a script can still set `HTTPS_PROXY` / `SSL_CERT_FILE`
+  (which the SDK honours) to intercept its own `--ask` call, so the reviewer flags scripts that
+  set those variables (Credential access) and you should read what you approve.
+- A background `aiscript --ask &` that outlives the script run fails closed with exit 9 (the
+  call counter is gone), so it cannot keep spending after the run ends.
 - API keys live in `config.yaml` (mode 600) or environment variables, and are never logged.
   A provider with a plain `http://` non-local `base_url` triggers a warning, since the key
   and script would travel unencrypted.

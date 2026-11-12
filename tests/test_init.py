@@ -207,3 +207,41 @@ def test_given_starter_config_when_decisions_example_is_uncommented_then_opt_in_
     assert "api_key" in entry
     assert "OpenAI Decisions API reviewer provider." in CONFIG_TEMPLATE
     assert "OPENAI_DECISIONS_API_KEY" in CONFIG_TEMPLATE.split("\n\n", 1)[0]
+
+
+def test_given_template_when_read_then_documents_default_provider_used_for_ai_in_scripts() -> None:
+    # then
+    comment = CONFIG_TEMPLATE.split("\ndefault_provider:")[0].split("\n\n")[-1].lower()
+    assert "ai calls" in comment
+    assert "script" in comment
+
+
+def test_given_template_when_read_then_shows_commented_ai_block_with_defaults() -> None:
+    # then
+    assert "# ai:" in CONFIG_TEMPLATE
+    for line in (
+        "max_input_kb: 128",
+        "max_calls_per_run: 1",
+        "timeout_seconds: 60",
+        "max_output_tokens: 4000",
+    ):
+        assert f"#   {line}" in CONFIG_TEMPLATE or f"# {line}" in CONFIG_TEMPLATE
+    assert "ai" not in yaml.safe_load(CONFIG_TEMPLATE)
+
+
+def test_given_fresh_template_when_loaded_then_ai_settings_are_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # given
+    from aiscript.config import AiSettings
+
+    run_init()
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-12345678")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts-env-12345678")
+
+    # when
+    s = load_settings()
+
+    # then
+    assert s.ai == AiSettings()
+    assert "openai" in s.ai_target

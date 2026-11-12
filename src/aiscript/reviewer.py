@@ -96,6 +96,8 @@ FILESYSTEM = "Filesystem"
 NETWORK = "Networking"
 REMOTE_EXEC = "Remote code execution"
 DEPENDENCIES = "Dependencies"
+AI_USE = "AI use"  # always risky
+CREDENTIAL = "Credential access"
 
 _SYS_DIRS = r"(?:etc|usr|bin|sbin|boot|lib|lib32|lib64|var(?!/tmp\b)|opt)"
 _SEP = r"[^\n;|&]*"  # stay within one simple command
@@ -354,6 +356,91 @@ def _code_lines(script: str, shell: str) -> Iterator[tuple[int, str]]:
             yield n, code
 
 
+_AISCRIPT_CMD = re.compile(
+    r"(?:^|[;&|(`{]\s*|\b(?:then|do|else)\s+)(?:[A-Za-z_]\w*=\S*\s+)*"
+    r"(?:\S*[\\/])?aiscript(?:\.exe)?(?=\s|$)",
+    re.IGNORECASE,
+)
+_ASK_FLAG = re.compile(r"(?<!\S)--ask(?![\w-])")
+_CONFIG_PATH = r"\.?aiscript[\\/]+(?:\S*[\\/])?(?:config|secrets)\.ya?ml"
+_LLM_HOSTS = (
+    r"(?:api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com"
+    r"|api\.mistral\.ai|api\.groq\.com|openrouter\.ai|api\.together\.xyz|api\.cohere\.com)"
+)
+_LLM_URL = rf"https?://(?:[\w.-]*@)?{_LLM_HOSTS}(?![\w.-])"
+# Variables the OpenAI SDK honours: setting them lets a script intercept its own --ask call.
+_TRANSPORT_ENV = r"\b(?:HTTPS?_PROXY|ALL_PROXY|SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE)\b"
+_CREDENTIAL_SHELL = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\$\{?(?:env:)?[A-Za-z0-9_]*(?:API_?KEY|TOKEN|SECRET)\b",
+        r"\b(?:printenv|getenv|GetEnvironmentVariable)\b[^\n]*(?:API_?KEY|TOKEN|SECRET)",
+        r"\b(?:OPENAI|ANTHROPIC)_BASE_URL\b",
+        _TRANSPORT_ENV,
+        r"(?<!\w)AISCRIPT_\w+",
+        _CONFIG_PATH,
+        _LLM_URL,
+    )
+]
+_PY_CRED_ENV = re.compile(
+    r"(?:^|_)(?:API_?KEY|TOKEN|SECRET)(?:_|$)|^(?:OPENAI|ANTHROPIC)_BASE_URL$|^AISCRIPT_"
+    r"|^(?:HTTPS?_PROXY|ALL_PROXY|SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE)$",
+    re.IGNORECASE,
+)
+_PY_CRED_STR = re.compile(rf"^\S*{_CONFIG_PATH}\S*$|^{_LLM_URL}", re.IGNORECASE)
+_PY_CRED_JOINED = re.compile(_CONFIG_PATH, re.IGNORECASE)
+
+
+# A standalone `aiscript` word anywhere on a line (wrappers such as `time`, `if`, `env` ...).
+_AISCRIPT_WORD = re.compile(r"(?<![\w.$-])aiscript(?:\.exe)?(?![\w.\\/-])", re.IGNORECASE)
+_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+_VAR_ASK = re.compile(
+    r"(?<!\S)[\"']?\$\{?(?:env:)?\w+\}?[\"']?\s(?:[^\n]*?\s)?--ask(?![\w-])", re.IGNORECASE
+)
+
+
+def _mentions_aiscript(code: str) -> bool:
+    """True when an unquoted standalone ``aiscript`` word appears (e.g. ``command -v aiscript``)."""
+    return _AISCRIPT_WORD.search(_QUOTED.sub('""', code)) is not None
+
+
+def _aiscript_findings(code: str, *, script_mentions: bool = False) -> list[str]:
+    """Categories for ``aiscript`` on a line: ``--ask`` is AI use, other arguments are RCE.
+
+    Command-position matches are exact; a fallback also flags a standalone ``aiscript`` word
+    elsewhere on the line (after ``if``/``time``/``env``/``xargs`` ...). ``script_mentions`` says
+    the script names ``aiscript`` elsewhere, so ``"$AI" --ask ...`` counts as AI use.
+    """
+    found: list[str] = []
+    for m in _AISCRIPT_CMD.finditer(code):
+        args = re.split(r"[;&|]", code[m.end() :], maxsplit=1)[0]
+        category = AI_USE if _ASK_FLAG.search(args) else REMOTE_EXEC
+        if category not in found:
+            found.append(category)
+    if _AISCRIPT_WORD.search(code):
+        if _ASK_FLAG.search(code):
+            if AI_USE not in found:
+                found.append(AI_USE)
+        elif REMOTE_EXEC not in found:
+            bare = _QUOTED.sub('""', code)
+            word = _AISCRIPT_WORD.search(bare)
+            if word and re.match(r"\s+[^\s<>|;&)]", bare[word.end() :]):
+                found.append(REMOTE_EXEC)
+    if script_mentions and AI_USE not in found and _VAR_ASK.search(code):
+        found.append(AI_USE)
+    return found
+
+
+def _credential_in_shell(code: str) -> bool:
+    return any(regex.search(code) for regex in _CREDENTIAL_SHELL)
+
+
+def _ai_reason(n: int, code: str, target: str) -> str:
+    return (
+        f"{AI_USE} (line {n}): {_short(printable(code))} (sends its input to {target} on every run)"
+    )
+
+
 # A plain echo/printf of text (no redirect, pipe, chaining or substitution) runs nothing.
 _INERT_BASH = re.compile(r"^(?:echo|printf)\s(?!.*\$\()[^|;&`<>]*$")
 
@@ -375,10 +462,12 @@ def _short(code: str, limit: int = 100) -> str:
     return code if len(code) <= limit else code[: limit - 1] + "…"
 
 
-def static_review(script: str, language: str) -> ReviewResult:
+def static_review(
+    script: str, language: str, *, ai_target: str = "the configured provider"
+) -> ReviewResult:
     """Static scan (regex for shells, ``ast`` for Python); one reason per (category, line)."""
     if language == "python":
-        return _python_review(script)
+        return _python_review(script, ai_target)
     shell = language
     if shell == "powershell":
         patterns = _PS
@@ -387,15 +476,27 @@ def static_review(script: str, language: str) -> ReviewResult:
     else:
         patterns = _BASH + _PS
     reasons: list[str] = []
-    for n, code in _code_lines(script, shell):
-        if shell == "bash" and _INERT_BASH.match(code):
-            continue
+    lines = list(_code_lines(script, shell))
+    mentions = any(_mentions_aiscript(code) for _, code in lines)
+    for n, code in lines:
         seen: set[str] = set()
-        for category, regex, _label in patterns:
-            if category in seen or not regex.search(code):
-                continue
-            seen.add(category)
-            reasons.append(f"{category} (line {n}): {_short(printable(code))}")
+        found: list[str] = []
+        if not (shell == "bash" and _INERT_BASH.match(code)):
+            for category, regex, _label in patterns:
+                if category not in seen and regex.search(code):
+                    seen.add(category)
+                    found.append(category)
+            for category in _aiscript_findings(code, script_mentions=mentions):
+                if category not in seen:
+                    seen.add(category)
+                    found.append(category)
+        if _credential_in_shell(code) and CREDENTIAL not in seen:
+            found.append(CREDENTIAL)
+        for category in sorted(found, key=_PY_ORDER.__getitem__):
+            if category == AI_USE:
+                reasons.append(_ai_reason(n, code, ai_target))
+            else:
+                reasons.append(f"{category} (line {n}): {_short(printable(code))}")
     return ReviewResult(bool(reasons), reasons)
 
 
@@ -463,7 +564,7 @@ _PY_PATH_WRITE_METHODS = {
     "chmod",
 }
 _PY_WINREG = {"SetValue", "SetValueEx", "DeleteKey", "DeleteKeyEx", "DeleteValue"}
-_PY_ORDER = {PRIVILEGE: 0, FILESYSTEM: 1, NETWORK: 2, REMOTE_EXEC: 3}
+_PY_ORDER = {PRIVILEGE: 0, FILESYSTEM: 1, NETWORK: 2, REMOTE_EXEC: 3, AI_USE: 4, CREDENTIAL: 5}
 
 
 def _str_value(node: ast.AST | None) -> str | None:
@@ -613,10 +714,34 @@ class _PyScan(ast.NodeVisitor):
             root = name.split(".")[0]
             if root in ("ctypes", "cffi"):
                 self.add(REMOTE_EXEC, node)  # native code is invisible to this scan
+            if root == "aiscript":
+                self.add(AI_USE, node)  # the shim is reachable by any alias, partial or getattr
             if any(name == m or name.startswith(m + ".") for m in _PY_DOWNLOAD):
                 self.downloads = True
 
     visit_Import = visit_ImportFrom = _imports
+
+    def environ_key(self, node: ast.expr) -> str | None:
+        node = self.resolve(node)
+        return _str_value(node)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if isinstance(node.value, str) and _PY_CRED_STR.search(node.value):
+            self.add(CREDENTIAL, node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        if self.qual(node.value) == "os.environ":
+            key = self.environ_key(node.slice)
+            if key is not None and _PY_CRED_ENV.search(key):
+                self.add(CREDENTIAL, node)
+        self.generic_visit(node)
+
+    def visit_BinOp(self, node: ast.BinOp) -> None:
+        if isinstance(node.op, ast.Div):
+            path = self.path_of(node)
+            if path is not None and _PY_CRED_JOINED.search(path):
+                self.add(CREDENTIAL, node)
+        self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
         self.check_call(node)
@@ -653,7 +778,11 @@ class _PyScan(ast.NodeVisitor):
             else ""
         )
         patterns = _BASH + (_PS if prog in _PY_WINDOWS_CMDS else [])
-        seen: set[str] = set()
+        seen: set[str] = set(_aiscript_findings(text))
+        if _credential_in_shell(text):
+            seen.add(CREDENTIAL)
+        for category in seen:
+            self.add(category, node)
         for category, regex, _label in patterns:
             if category not in seen and regex.search(text):
                 seen.add(category)
@@ -683,6 +812,26 @@ class _PyScan(ast.NodeVisitor):
             self.add(REMOTE_EXEC, node)
         elif name.startswith(("ctypes.", "cffi.")):
             self.add(REMOTE_EXEC, node)
+
+        # --- AI use / credentials -----------------------------------------
+        if name == "aiscript.ask":
+            self.add(AI_USE, node)
+        if name in (
+            "os.environ.get",
+            "os.environ.setdefault",
+            "os.environ.pop",
+            "os.getenv",
+            "os.putenv",
+        ):
+            key = self.environ_key(node.args[0]) if node.args else None
+            if key is not None and _PY_CRED_ENV.search(key):
+                self.add(CREDENTIAL, node)
+        if attr == "joinpath" or name == "os.path.join" or tail in _PY_PATH_CLASSES:
+            parts = [self.literal(a) for a in node.args]
+            if parts and all(p is not None for p in parts):
+                joined = "/".join(p for p in parts if p is not None)
+                if _PY_CRED_JOINED.search(joined):
+                    self.add(CREDENTIAL, node)
 
         # --- privilege ----------------------------------------------------
         if name in _PY_SETID:
@@ -778,7 +927,7 @@ class _PyScan(ast.NodeVisitor):
             self.add(FILESYSTEM, node)
 
 
-def _python_review(script: str) -> ReviewResult:
+def _python_review(script: str, ai_target: str = "the configured provider") -> ReviewResult:
     try:
         tree = ast.parse(script)
     except (SyntaxError, ValueError, RecursionError, MemoryError) as exc:
@@ -796,7 +945,9 @@ def _python_review(script: str) -> ReviewResult:
         for node in scan.dynamic_execs:
             scan.add(REMOTE_EXEC, node)
     reasons = [
-        f"{category} (line {n}): {_short(printable(scan.src_line(n)))}"
+        _ai_reason(n, scan.src_line(n), ai_target)
+        if category == AI_USE
+        else f"{category} (line {n}): {_short(printable(scan.src_line(n)))}"
         for category, n in sorted(scan.found, key=lambda k: (k[1], _PY_ORDER[k[0]]))
     ]
     return ReviewResult(bool(reasons), reasons)
@@ -1009,13 +1160,30 @@ def llm_review(
         return ReviewResult(True, [f"Reviewer unavailable: {exc}"])
 
 
+def uses_ai(script: str, language: str) -> bool:
+    """True when ``script`` calls ``aiscript --ask`` or the Python shim's ``ask()``."""
+    if language == "python":
+        try:
+            tree = ast.parse(script)
+            scan = _PyScan(tree, re.split(r"\r\n|\r|\n", script))
+            scan.visit(tree)
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
+            return False
+        return any(category == AI_USE for category, _ in scan.found)
+    lines = list(_code_lines(script, language))
+    mentions = any(_mentions_aiscript(code) for _, code in lines)
+    return any(AI_USE in _aiscript_findings(code, script_mentions=mentions) for _, code in lines)
+
+
 def review(
     script: str,
     language: str,
     reviewer: ProviderConfig | None,
     dependencies: Sequence[str] = (),
+    *,
+    ai_target: str = "the default provider",
 ) -> ReviewResult:
-    result = static_review(script, language)
+    result = static_review(script, language, ai_target=ai_target)
     if dependencies:
         result.reasons.append(
             f"{DEPENDENCIES}: installs third-party packages from PyPI: {', '.join(dependencies)}"

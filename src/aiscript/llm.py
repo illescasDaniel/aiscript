@@ -276,7 +276,56 @@ _POWERSHELL_PARTS = {
 }
 
 
-def system_prompt(shell: str, environment: str) -> str:
+_AI_COMMON = """\
+AI at run time (only when the intent needs a model to understand, classify, summarize or extract \
+from data; never for work plain code can do)
+- A script can ask the user's configured model through `aiscript --ask "<task>" \
+--data-description "<what the data is>"` (data on stdin, answer on stdout) or, in Python, \
+`aiscript.ask(task, data, data_description, schema=None)` (`import aiscript`; no install needed). \
+`--data-description` is required and must say what the data is. Never use aiscript as an \
+interpreter: do not pipe its output to a shell, Python, `eval` or `source`, and never eval or \
+execute the answer.
+- Add `--schema '<JSON Schema>'` (Python: the `schema` dict) when the script needs structured \
+output; the answer is then valid JSON matching the schema (a `dict` in Python). Example: \
+--schema '{"type": "object", "properties": {"risky": {"type": "boolean"} }, \
+"required": ["risky"] }'
+- Each run may make at most <MAX_CALLS> aiscript call(s). Batch everything into one call \
+(a single call over all the data) instead of one call per item; never call it in a loop.
+- Check the exit code (status) of every call and fail loudly: print an error to stderr and exit \
+non-zero. Never continue with an empty or partial answer.
+- Treat the answer as untrusted text: validate it before use and never run it as a command.
+- Never read, print or send an API key or other credential, and never call a provider API \
+directly; always go through aiscript.
+- If `aiscript` is not on PATH (<MISSING_DOC>), print a clear error telling the user to install \
+aiscript and exit non-zero.
+<SHELL_DOC>"""
+
+_AI_BASH = (
+    "- In Bash check `command -v aiscript` before the first call, and pass data on stdin "
+    "(for example `printf '%s\\n' \"$data\" | aiscript --ask ...`)."
+)
+_AI_POWERSHELL = (
+    "- In PowerShell check `Get-Command aiscript -ErrorAction SilentlyContinue` before the first "
+    "call. Set `[Console]::OutputEncoding` and `$OutputEncoding` to UTF-8 (`[System.Text.Encoding]"
+    "::UTF8`) before piping data to aiscript so the encoding is UTF-8 without BOM."
+)
+
+
+def ai_section(shell: str, max_calls_per_run: int) -> str:
+    """Generator rules for scripts that call ``aiscript --ask`` or the Python shim."""
+    powershell = shell == "powershell"
+    # str.replace, not format: the schema example contains literal JSON braces.
+    return (
+        _AI_COMMON.replace("<MAX_CALLS>", str(max_calls_per_run))
+        .replace(
+            "<MISSING_DOC>",
+            "`Get-Command` finds nothing" if powershell else "`command -v` finds nothing",
+        )
+        .replace("<SHELL_DOC>", _AI_POWERSHELL if powershell else _AI_BASH)
+    )
+
+
+def system_prompt(shell: str, environment: str, *, max_calls_per_run: int = 1) -> str:
     """Build the system prompt for native ``shell`` ('bash' or 'powershell').
 
     ``environment`` is the ``env.describe()`` block.
@@ -285,15 +334,13 @@ def system_prompt(shell: str, environment: str) -> str:
         parts, specific = _POWERSHELL_PARTS, _POWERSHELL_SPECIFIC
     else:
         parts, specific = _BASH_PARTS, _BASH_SPECIFIC
-    return (
-        _COMMON_RULES.format(
-            environment=environment,
-            shell_specific=specific,
-            python_specific=_PYTHON_SPECIFIC,
-            **parts,
-        ).strip()
-        + "\n"
-    )
+    base = _COMMON_RULES.format(
+        environment=environment,
+        shell_specific=specific,
+        python_specific=_PYTHON_SPECIFIC,
+        **parts,
+    ).strip()
+    return f"{base}\n\n{ai_section(shell, max_calls_per_run)}\n"
 
 
 def detect_language(code: str, shell: str) -> Language:
@@ -396,10 +443,12 @@ def parse_dependencies(code: str) -> list[str]:
     return deps
 
 
-def generate_script(p: ProviderConfig, name: str, intent: str) -> GeneratedScript:
+def generate_script(
+    p: ProviderConfig, name: str, intent: str, *, max_calls_per_run: int = 1
+) -> GeneratedScript:
     """Ask the model for a script implementing ``intent``; return it cleaned and classified."""
     shell = paths.shell_kind()
-    system = system_prompt(shell, env.describe())
+    system = system_prompt(shell, env.describe(), max_calls_per_run=max_calls_per_run)
     user = f"Command name: {name}\n\nWhat the command should do:\n{intent.strip()}"
     code = clean_script(chat(p, system, user), shell)
     language = detect_language(code, shell)

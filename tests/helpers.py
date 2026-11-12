@@ -34,9 +34,13 @@ class FakeLLM:
         self.script = script
         self.dependencies = dependencies or []
         self.calls: list[tuple[str, str]] = []
+        self.max_calls_per_run = 1  # value of the keyword on the last call
 
-    def __call__(self, p: ProviderConfig, name: str, intent: str) -> llm.GeneratedScript:
+    def __call__(
+        self, p: ProviderConfig, name: str, intent: str, *, max_calls_per_run: int = 1
+    ) -> llm.GeneratedScript:
         self.calls.append((name, intent))
+        self.max_calls_per_run = max_calls_per_run
         python = self.script.startswith("#!/usr/bin/env python")
         language: paths.Language = "python" if python else paths.shell_kind()
         return llm.GeneratedScript(self.script, language, list(self.dependencies))

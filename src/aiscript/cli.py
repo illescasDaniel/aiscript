@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from aiscript import __version__, builder, paths, prompt_file
+from aiscript import __version__, ask_cli, builder, paths, prompt_file, sweep
 from aiscript.config import load_settings
 from aiscript.errors import AiscriptError
 from aiscript.init_cmd import run_init
@@ -25,6 +25,9 @@ usage: aiscript NAME [args...]       run a command (created/built on first use)
        aiscript --edit NAME          edit a command's prompt (rebuilds on next run)
        aiscript --rebuild NAME       regenerate a command's script (does not run it)
        aiscript --remove NAME        delete a command's prompt and script(s)
+       aiscript --ask=TASK --data-description=TEXT [--schema=JSON] < data
+                                     ask the default provider about stdin (for scripts)
+       aiscript --check-secrets      scan cached scripts and prompts for API keys
        aiscript --help | --version
 
 Everything after NAME is passed untouched to the generated script.
@@ -41,6 +44,10 @@ def _build_parser() -> argparse.ArgumentParser:
     group.add_argument("--remove", metavar="NAME")
     group.add_argument("--help", "-h", action="store_true")
     group.add_argument("--version", action="store_true")
+    group.add_argument("--ask", metavar="TASK")
+    group.add_argument("--check-secrets", action="store_true")
+    parser.add_argument("--data-description")
+    parser.add_argument("--schema")
     return parser
 
 
@@ -123,6 +130,7 @@ def _run_command(name: str, args: list[str]) -> int:
         if not answer:
             _err("")
             raise AiscriptError("No description given; nothing saved.")
+        builder.check_prompt(answer, load_settings())
         ppath.write_text(answer + "\n", encoding="utf-8")
     if builder.needs_build(name):
         builder.build(name, load_settings())
@@ -133,7 +141,9 @@ def _dispatch(argv: list[str]) -> int:
     if not argv:
         sys.stderr.write(_HELP)
         return 2
-    if os.sep in argv[0] or (os.altsep is not None and os.altsep in argv[0]):
+    if argv[0].startswith("-"):
+        pass  # an option value may contain a path separator; never treat it as a file
+    elif os.sep in argv[0] or (os.altsep is not None and os.altsep in argv[0]):
         return prompt_file.execute(Path(argv[0]), argv[1:], load_settings)
     if argv[0].startswith("-"):
         try:
@@ -146,6 +156,23 @@ def _dispatch(argv: list[str]) -> int:
         if ns.version:
             print(f"aiscript {__version__}")
             return 0
+        if ns.ask is None and (ns.data_description is not None or ns.schema is not None):
+            _err("aiscript: error: --data-description and --schema are only valid with --ask.")
+            return 2
+        if ns.ask is not None:
+            if ns.data_description is None:
+                _err("aiscript: error: --ask requires --data-description.")
+                return 2
+            return ask_cli.run(
+                ns.ask,
+                ns.data_description,
+                ns.schema,
+                stdin=sys.stdin.buffer,
+                stdout=sys.stdout.buffer,
+                environ=os.environ,
+            )
+        if ns.check_secrets:
+            return sweep.check_secrets()
         if ns.init:
             return run_init()
         if ns.list:

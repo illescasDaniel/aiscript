@@ -50,3 +50,8 @@ jobs:
           "$RUNNER_TEMP/venv/bin/aiscript" --help
           "$RUNNER_TEMP/venv/bin/aiscript" --init
           "$RUNNER_TEMP/venv/bin/aiscript" --list
+      - name: Check the AI shim is installed
+        run: |
+          test -f "$("$RUNNER_TEMP/venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')/aiscript/_shim/aiscript/__init__.py"
+          purelib="$("$RUNNER_TEMP/venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+          PYTHONPATH="$purelib/aiscript/_shim" python3 -c "import aiscript; assert aiscript.ask"

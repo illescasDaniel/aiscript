@@ -248,7 +248,9 @@ def test_given_parallel_invocations_when_cache_is_empty_then_one_build_is_publis
     entered = Event()
     proceed = Event()
 
-    def delayed(p: ProviderConfig, name: str, intent: str) -> llm.GeneratedScript:
+    def delayed(
+        p: ProviderConfig, name: str, intent: str, *, max_calls_per_run: int = 1
+    ) -> llm.GeneratedScript:
         entered.set()
         assert proceed.wait(5)
         return generator(p, name, intent)
@@ -393,7 +395,7 @@ def test_given_uncached_shebang_when_os_launches_then_builds_and_forwards_stdin(
         "from aiscript import cli, llm\n"
         "from aiscript.config import Settings, ProviderConfig\n"
         "cli.load_settings = lambda: Settings(ProviderConfig('fake', 'k', None, 'm'), None)\n"
-        "def generate(provider, name, intent):\n"
+        "def generate(provider, name, intent, **kw):\n"
         f" Path({str(calls)!r}).write_text(intent)\n"
         f" return llm.GeneratedScript({code!r}, 'python', [])\n"
         "llm.generate_script = generate\n"

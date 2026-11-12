@@ -1,5 +1,11 @@
 # Technical decisions
 
+## 2026-11-12: AI inside scripts, build-time decisions D1-D5 and G5
+
+- D1: the shim goes on PYTHONPATH only for Python scripts that import `aiscript`. D2: `--ask` check order F6, config, F7, input, cap, send. D3: one counter dir of slot files per run (`AISCRIPT_ASK_COUNTER`). D4: the first-use answer of a named command is secret-scanned before it is saved. D5: `--list` shows `+ai`.
+- `default_provider` is the AI provider (no `ai.provider` key). Env keys are only used for api.openai.com.
+- `store=False` is sent on Responses and on Chat for the official endpoint only (user approved).
+
 ## 2026-10-22: Preserve raw Decisions response types
 
 - **Context:** An installed SDK probe converted `False` and `"0.0"` predicate probabilities into `0.0` during `Decision` parsing.

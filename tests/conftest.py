@@ -1,6 +1,8 @@
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from fake_openai import FakeOpenAI
 
 
 @pytest.fixture(autouse=True)
@@ -18,5 +20,12 @@ def _isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "OLLAYA_HOST",
         "OLLAYA_API_KEY",
         "XDG_CONFIG_HOME",
+        "AISCRIPT_ASK_COUNTER",
     ):
         monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture
+def fake_openai() -> Iterator[FakeOpenAI]:
+    with FakeOpenAI() as server:
+        yield server

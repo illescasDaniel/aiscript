@@ -4,8 +4,21 @@ import sys
 import pytest
 from helpers import need
 
-from aiscript.config import OLLAYA_DEFAULT_MODEL, ProviderConfig, load_raw_config, load_settings
-from aiscript.errors import ConfigError
+from aiscript.config import (
+    OFFICIAL_OPENAI_URL,
+    OLLAYA_DEFAULT_MODEL,
+    AiSettings,
+    AskTarget,
+    ProviderConfig,
+    collect_known_secrets,
+    describe_ask_target,
+    identify_ask_target,
+    load_ai_settings,
+    load_raw_config,
+    load_settings,
+    resolve_ask_key,
+)
+from aiscript.errors import AskConfigError, ConfigError
 from aiscript.paths import aiscript_home, config_path, legacy_secrets_path
 
 
@@ -590,3 +603,525 @@ def test_given_decisions_no_usable_dedicated_key_when_settings_resolve_then_cred
     assert "api_key" in message
     assert "OPENAI_DECISIONS_API_KEY" in message
     assert "openai_decisions" in message
+
+
+# --- AI inside scripts (1.4.0): C4 provider and key resolution, C5 ai: block ---
+
+_AI_KEY_BOUNDS = [
+    ("max_input_kb", 1, 1024),
+    ("max_calls_per_run", 1, 100),
+    ("timeout_seconds", 1, 600),
+    ("max_output_tokens", 1, 32000),
+]
+_AI_DEFAULTS = {
+    "max_input_kb": 128,
+    "max_calls_per_run": 1,
+    "timeout_seconds": 60,
+    "max_output_tokens": 4000,
+}
+_REMOTE = "https://x.example/v1"
+_KEY_VALUE = "sk-secret-value-123456"
+
+
+@pytest.mark.parametrize("raw", [{}, {"ai": None}])
+def test_given_absent_or_null_ai_block_when_load_ai_settings_then_defaults(
+    raw: dict[str, object],
+) -> None:
+    # when
+    ai = load_ai_settings(raw)
+
+    # then
+    assert (ai.max_input_kb, ai.max_calls_per_run, ai.timeout_seconds, ai.max_output_tokens) == (
+        128,
+        1,
+        60,
+        4000,
+    )
+    assert ai == AiSettings()
+
+
+@pytest.mark.parametrize(("key", "low", "high"), _AI_KEY_BOUNDS)
+def test_given_ai_value_at_bounds_when_load_ai_settings_then_accepted(
+    key: str, low: int, high: int
+) -> None:
+    # when
+    at_low = load_ai_settings({"ai": {key: low}})
+    at_high = load_ai_settings({"ai": {key: high}})
+
+    # then
+    assert getattr(at_low, key) == low
+    assert getattr(at_high, key) == high
+    for other, default in _AI_DEFAULTS.items():
+        if other != key:
+            assert getattr(at_low, other) == default
+
+
+@pytest.mark.parametrize(("key", "low", "high"), _AI_KEY_BOUNDS)
+def test_given_ai_value_outside_bounds_when_load_ai_settings_then_config_error_names_key(
+    key: str, low: int, high: int
+) -> None:
+    for bad in (0, -1, low - 1, high + 1):
+        # when / then
+        with pytest.raises(ConfigError, match=key):
+            load_ai_settings({"ai": {key: bad}})
+
+
+@pytest.mark.parametrize("bad", [1.5, True, False, "128", None, [1]])
+@pytest.mark.parametrize("key", [k for k, _, _ in _AI_KEY_BOUNDS])
+def test_given_non_integer_ai_value_when_load_ai_settings_then_config_error_names_key(
+    key: str, bad: object
+) -> None:
+    # when / then
+    with pytest.raises(ConfigError, match=key):
+        load_ai_settings({"ai": {key: bad}})
+
+
+def test_given_unknown_ai_key_when_load_ai_settings_then_config_error_names_it() -> None:
+    # when / then
+    with pytest.raises(ConfigError, match="max_retries"):
+        load_ai_settings({"ai": {"max_retries": 3}})
+
+
+@pytest.mark.parametrize("bad", [[1, 2], "fast", 5])
+def test_given_non_mapping_ai_block_when_load_ai_settings_then_config_error(bad: object) -> None:
+    # when / then
+    with pytest.raises(ConfigError, match="ai"):
+        load_ai_settings({"ai": bad})
+
+
+def test_given_no_default_provider_when_identify_ask_target_then_openai_defaults() -> None:
+    # when
+    target = identify_ask_target({})
+
+    # then
+    assert target == AskTarget(
+        provider="openai",
+        model="gpt-6-luna",
+        base_url=OFFICIAL_OPENAI_URL,
+        api="responses",
+        official=True,
+        local=False,
+    )
+
+
+def test_given_openai_entry_without_base_url_when_identify_then_official_url_is_pinned() -> None:
+    # given
+    raw = {"providers": {"openai": {"model": "m1", "reasoning_effort": "low", "temperature": 0.5}}}
+
+    # when
+    target = identify_ask_target(raw)
+
+    # then
+    assert target.base_url == OFFICIAL_OPENAI_URL
+    assert target.official is True
+    assert target.local is False
+    assert target.model == "m1"
+    assert target.api == "responses"
+    assert target.reasoning_effort == "low"
+    assert target.temperature == 0.5
+
+
+def test_given_non_official_chat_endpoint_when_identify_then_chat_and_not_official() -> None:
+    # given
+    raw = {"default_provider": "groq", "providers": {"groq": {"base_url": _REMOTE, "model": "j"}}}
+
+    # when
+    target = identify_ask_target(raw)
+
+    # then
+    assert (target.provider, target.model, target.base_url) == ("groq", "j", _REMOTE)
+    assert target.api == "chat"
+    assert target.official is False
+    assert target.local is False
+
+
+def test_given_explicit_api_when_identify_then_it_is_used() -> None:
+    # given
+    raw: dict[str, object] = {
+        "default_provider": "x",
+        "providers": {"x": {"base_url": _REMOTE, "api": "responses"}},
+    }
+
+    # when / then
+    assert identify_ask_target(raw).api == "responses"
+
+
+def test_given_loopback_endpoint_when_identify_then_local_flag_set() -> None:
+    # given
+    raw = {
+        "default_provider": "ollama",
+        "providers": {"ollama": {"base_url": "http://localhost:11434/v1", "model": "qwen3"}},
+    }
+
+    # when
+    target = identify_ask_target(raw)
+
+    # then
+    assert target.local is True
+    assert target.official is False
+    assert target.base_url == "http://localhost:11434/v1"
+    assert target.api == "chat"
+
+
+def test_given_routing_env_vars_when_identify_then_they_are_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # given
+    raw = {
+        "default_provider": "openai",
+        "providers": {"openai": {"model": "yaml-model"}, "other": {"base_url": _REMOTE}},
+    }
+    monkeypatch.setenv("AISCRIPT_PROVIDER", "other")
+    monkeypatch.setenv("AISCRIPT_MODEL", "env-model")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://evil.example/v1")
+
+    # when
+    target = identify_ask_target(raw)
+
+    # then
+    assert (target.provider, target.model, target.base_url) == (
+        "openai",
+        "yaml-model",
+        OFFICIAL_OPENAI_URL,
+    )
+
+
+def test_given_routing_env_vars_when_generator_loads_then_they_are_still_honoured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # given
+    write_config(
+        'default_provider: openai\nproviders:\n  openai: {api_key: "sk-y", model: "yaml-model"}\n'
+        '  other: {api_key: "sk-o", base_url: "https://x.example/v1"}\n'
+    )
+    monkeypatch.setenv("AISCRIPT_PROVIDER", "other")
+    monkeypatch.setenv("AISCRIPT_MODEL", "env-model")
+
+    # when
+    s = load_settings()
+
+    # then
+    assert s.generator.name == "other"
+    assert s.generator.model == "env-model"
+
+
+def test_given_routing_env_vars_when_settings_load_then_ask_target_stays_yaml_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # given
+    write_config(
+        'default_provider: openai\nproviders:\n  openai: {api_key: "sk-y", model: "yaml-model"}\n'
+        '  other: {api_key: "sk-o", base_url: "https://x.example/v1"}\n'
+    )
+    monkeypatch.setenv("AISCRIPT_PROVIDER", "other")
+    monkeypatch.setenv("AISCRIPT_MODEL", "env-model")
+
+    # when
+    target = identify_ask_target(load_raw_config())
+
+    # then
+    assert (target.provider, target.model) == ("openai", "yaml-model")
+
+
+@pytest.mark.parametrize(
+    "providers",
+    [
+        {"jev": {"api_key": "ts-key-12345"}},
+        {"ollaya": {}},
+        {"x": {"kind": "jev"}},
+        {"x": {"kind": "ollaya"}},
+        {"x": {"api": "decisions"}},
+        {"x": {"kind": "openai", "api": "decisions", "api_key": "sk-decisions-1"}},
+    ],
+)
+def test_given_non_openai_compatible_default_when_identify_then_ask_config_error(
+    providers: dict[str, object],
+) -> None:
+    # given
+    name = next(iter(providers))
+    raw = {"default_provider": name, "providers": providers}
+
+    # when / then
+    with pytest.raises(AskConfigError):
+        identify_ask_target(raw)
+
+
+def test_given_undefined_default_provider_when_identify_then_ask_config_error() -> None:
+    # given
+    raw = {"default_provider": "missing", "providers": {"openai": {}}}
+
+    # when / then
+    with pytest.raises(AskConfigError, match="missing"):
+        identify_ask_target(raw)
+
+
+def test_given_broken_reviewer_key_when_identify_then_target_unaffected() -> None:
+    # given: reviewer jev has no key anywhere; load_settings would fail on it
+    raw = {
+        "default_provider": "openai",
+        "reviewer_provider": "jev",
+        "providers": {"openai": {"api_key": "sk-ok-12345678"}, "jev": {"api_key": "..."}},
+    }
+
+    # when
+    target = identify_ask_target(raw)
+    key = resolve_ask_key(target, raw, {})
+
+    # then
+    assert target.provider == "openai"
+    assert key == "sk-ok-12345678"
+
+
+def _official() -> AskTarget:
+    return AskTarget("openai", "m", OFFICIAL_OPENAI_URL, "responses", official=True, local=False)
+
+
+def _remote() -> AskTarget:
+    return AskTarget("groq", "m", _REMOTE, "chat", official=False, local=False)
+
+
+def _local() -> AskTarget:
+    return AskTarget("ollama", "m", "http://127.0.0.1:11434/v1", "chat", official=False, local=True)
+
+
+def test_given_all_key_sources_when_resolve_official_then_yaml_wins() -> None:
+    # given
+    raw = {"providers": {"openai": {"api_key": "sk-yaml-12345678"}}}
+    environ = {"OPENAI_API_KEY": "sk-env-12345678"}
+
+    # when / then
+    assert resolve_ask_key(_official(), raw, environ) == "sk-yaml-12345678"
+
+
+def test_given_named_and_global_env_when_resolve_official_then_named_wins() -> None:
+    # given
+    target = AskTarget("groq", "m", OFFICIAL_OPENAI_URL, "chat", official=True, local=False)
+    environ = {"GROQ_API_KEY": "gsk-named-1234", "OPENAI_API_KEY": "sk-global-1234"}
+
+    # when / then
+    assert resolve_ask_key(target, {"providers": {"groq": {}}}, environ) == "gsk-named-1234"
+
+
+def test_given_hyphenated_provider_when_resolve_official_then_named_env_is_normalised() -> None:
+    # given
+    target = AskTarget("my-oai", "m", OFFICIAL_OPENAI_URL, "chat", official=True, local=False)
+    environ = {"MY_OAI_API_KEY": "sk-named-1234", "OPENAI_API_KEY": "sk-global-1234"}
+
+    # when / then
+    assert resolve_ask_key(target, {"providers": {"my-oai": {}}}, environ) == "sk-named-1234"
+
+
+def test_given_placeholder_yaml_key_when_resolve_official_then_env_key_used() -> None:
+    # given
+    raw = {"providers": {"openai": {"api_key": "sk-proj-..."}}}
+
+    # when / then
+    assert resolve_ask_key(_official(), raw, {"OPENAI_API_KEY": "sk-env-12345678"}) == (
+        "sk-env-12345678"
+    )
+
+
+def test_given_only_openai_env_key_when_resolve_official_then_used() -> None:
+    # when / then
+    assert resolve_ask_key(_official(), {}, {"OPENAI_API_KEY": "sk-env-12345678"}) == (
+        "sk-env-12345678"
+    )
+
+
+def test_given_no_key_when_resolve_official_then_error_names_sources_without_values() -> None:
+    # given
+    raw = {"providers": {"openai": {"api_key": "..."}}}
+
+    # when
+    with pytest.raises(AskConfigError) as ei:
+        resolve_ask_key(_official(), raw, {})
+
+    # then
+    msg = str(ei.value)
+    assert "api_key" in msg
+    assert "OPENAI_API_KEY" in msg
+    assert str(config_path()) in msg
+
+
+def test_given_env_only_key_when_resolve_non_official_then_error_and_value_not_leaked() -> None:
+    # given
+    environ = {"GROQ_API_KEY": _KEY_VALUE, "OPENAI_API_KEY": _KEY_VALUE + "-2"}
+
+    # when
+    with pytest.raises(AskConfigError) as ei:
+        resolve_ask_key(_remote(), {"providers": {"groq": {}}}, environ)
+
+    # then
+    msg = str(ei.value)
+    assert "api_key" in msg
+    assert _KEY_VALUE not in msg
+
+
+def test_given_yaml_key_when_resolve_non_official_then_it_is_used() -> None:
+    # given
+    raw = {"providers": {"groq": {"api_key": "gsk-yaml-12345"}}}
+
+    # when / then
+    assert resolve_ask_key(_remote(), raw, {"OPENAI_API_KEY": "sk-env-12345678"}) == (
+        "gsk-yaml-12345"
+    )
+
+
+def test_given_loopback_without_key_when_resolve_then_not_needed() -> None:
+    # when / then
+    assert resolve_ask_key(_local(), {"providers": {"ollama": {}}}, {}) == "not-needed"
+
+
+def test_given_loopback_and_openai_env_key_when_resolve_then_env_key_not_used() -> None:
+    # when
+    key = resolve_ask_key(_local(), {"providers": {"ollama": {}}}, {"OPENAI_API_KEY": _KEY_VALUE})
+
+    # then
+    assert key == "not-needed"
+
+
+def test_given_loopback_with_yaml_key_when_resolve_then_yaml_key() -> None:
+    # given
+    raw = {"providers": {"ollama": {"api_key": "local-key-1234"}}}
+
+    # when / then
+    assert resolve_ask_key(_local(), raw, {}) == "local-key-1234"
+
+
+def test_given_default_provider_when_describe_then_label_names_provider_and_model() -> None:
+    # given
+    raw = {"default_provider": "groq", "providers": {"groq": {"base_url": _REMOTE, "model": "j"}}}
+
+    # when
+    label = describe_ask_target(raw)
+
+    # then
+    assert "groq" in label
+    assert "j" in label
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"default_provider": "jev", "providers": {"jev": {"api_key": "ts-key-12345"}}},
+        {"default_provider": "missing", "providers": {"openai": {}}},
+        {"default_provider": "x", "providers": "nonsense"},
+        {"ai": [1], "providers": {"x": 1}, "default_provider": 7},
+    ],
+)
+def test_given_unusable_default_when_describe_then_never_raises_and_says_not_usable(
+    raw: dict[str, object],
+) -> None:
+    # when
+    label = describe_ask_target(raw)
+
+    # then
+    assert "not usable" in label.lower()
+
+
+def test_given_configured_keys_when_collect_known_secrets_then_all_real_ones_deduped() -> None:
+    # given
+    raw = {
+        "providers": {
+            "openai": {"api_key": "sk-yaml-openai-1"},
+            "groq": {"api_key": "gsk-yaml-groq-1"},
+            "jev": {"api_key": "ts-dup-value-123"},
+            "ph": {"api_key": "sk-proj-..."},
+            "short": {"api_key": "abc1234"},
+            "loc": {"api_key": "not-needed"},
+            "bare": {},
+        }
+    }
+    environ = {
+        "OPENAI_API_KEY": "sk-env-openai-1",
+        "OPENAI_DECISIONS_API_KEY": "sk-env-decisions",
+        "TYPESAFE_API_KEY": "ts-dup-value-123",
+        "OLLAYA_API_KEY": "short",
+        "BARE_API_KEY": "bare-env-key-123",
+        "GROQ_API_KEY": "gsk-env-groq-1",
+        "UNRELATED_API_KEY": "unrelated-value-1",
+        "PATH": "/usr/bin:/bin",
+    }
+
+    # when
+    secrets = collect_known_secrets(raw, environ)
+
+    # then
+    assert sorted(secrets) == sorted(
+        {
+            "sk-yaml-openai-1",
+            "gsk-yaml-groq-1",
+            "ts-dup-value-123",
+            "sk-env-openai-1",
+            "sk-env-decisions",
+            "bare-env-key-123",
+            "gsk-env-groq-1",
+        }
+    )
+    assert len(secrets) == len(set(secrets))
+
+
+def test_given_only_placeholders_and_short_values_when_collect_then_empty() -> None:
+    # given
+    raw = {"providers": {"a": {"api_key": "..."}, "b": {"api_key": "1234567"}}}
+    environ = {"OLLAYA_API_KEY": "not-needed", "OPENAI_API_KEY": "short", "A_API_KEY": "x..."}
+
+    # when / then
+    assert collect_known_secrets(raw, environ) == ()
+
+
+def test_given_valid_config_when_load_settings_then_ai_fields_are_filled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # given
+    write_config(
+        "ai: {max_input_kb: 256, max_calls_per_run: 3, timeout_seconds: 30,"
+        " max_output_tokens: 1000}\n"
+        'providers:\n  openai: {api_key: "sk-yaml-12345678", model: m1}\n'
+    )
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts-env-12345678")
+
+    # when
+    s = load_settings()
+
+    # then
+    assert s.ai == AiSettings(256, 3, 30, 1000)
+    assert "openai" in s.ai_target
+    assert "m1" in s.ai_target
+    assert "sk-yaml-12345678" in s.known_secrets
+    assert "ts-env-12345678" in s.known_secrets
+    assert "sk-yaml-12345678" not in repr(s)
+
+
+def test_given_130_style_config_when_load_settings_then_defaults_and_unchanged_roles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # given
+    write_config(
+        "default_provider: openai\nreviewer_provider: jev\n"
+        'providers:\n  openai: {api_key: "sk-y1234567"}\n  jev: {api_key: "ts-y1234567"}\n'
+    )
+
+    # when
+    s = load_settings()
+
+    # then
+    assert s.ai == AiSettings()
+    assert s.generator.name == "openai"
+    assert s.generator.api_key == "sk-y1234567"
+    assert need(s.reviewer).name == "jev"
+    assert "openai" in s.ai_target
+    assert "sk-y1234567" in s.known_secrets
+
+
+@pytest.mark.parametrize("block", ["ai: {max_input_kb: 0}", "ai: {bogus: 1}", "ai: [1]"])
+def test_given_invalid_ai_block_when_load_settings_then_config_error(
+    monkeypatch: pytest.MonkeyPatch, block: str
+) -> None:
+    # given
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-12345678")
+    write_config(block + "\n")
+
+    # when / then
+    with pytest.raises(ConfigError):
+        load_settings()

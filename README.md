@@ -55,6 +55,13 @@ The first run generates and reviews the program. Inspect it if approval is reque
 reuse the cached build. See [prompt files](docs/prompt-files.md) for PATH setup, Windows,
 arguments, caching and rebuilding.
 
+## AI inside scripts
+
+Generated scripts can ask your configured model to summarise, classify or extract data through
+`aiscript.ask` (Python) or `aiscript --ask` (shell), without ever seeing your API key. Their input
+is sent to the provider on every run. See [usage](docs/usage.md#ai-inside-scripts) and
+[privacy](docs/safety.md#privacy).
+
 ## Safety review / decision models
 
 Generated programs are checked before they are saved or run. Risky programs need approval; review

@@ -11,7 +11,8 @@ from pathlib import Path
 
 from aiscript import llm, paths, pysetup, reviewer
 from aiscript.config import Settings
-from aiscript.errors import AiscriptError
+from aiscript.errors import AiscriptError, SecretFoundError
+from aiscript.secret_scan import KnownSecrets, scan
 
 
 def needs_build(name: str) -> bool:
@@ -38,12 +39,31 @@ def _read_intent(name: str) -> str:
     return intent
 
 
+def check_prompt(intent: str, settings: Settings) -> None:
+    """Refuse an intent that contains a credential (F2); no override."""
+    findings = scan(intent, KnownSecrets.from_values(settings.known_secrets))
+    if findings:
+        raise SecretFoundError("prompt", findings)
+
+
 def generate_reviewed(name: str, intent: str, settings: Settings) -> llm.GeneratedScript:
     """Generate a program and require the existing safety review before returning it."""
+    check_prompt(intent, settings)
     gen = settings.generator
     print(f"Generating {name!r} with {gen.name}/{gen.model}...", file=sys.stderr)
-    script = llm.generate_script(gen, name, intent)
-    result = reviewer.review(script.code, script.language, settings.reviewer, script.dependencies)
+    script = llm.generate_script(gen, name, intent, max_calls_per_run=settings.ai.max_calls_per_run)
+    findings = scan(
+        script.code, KnownSecrets.from_values(settings.known_secrets), language=script.language
+    )
+    if findings:
+        raise SecretFoundError("code", findings)
+    result = reviewer.review(
+        script.code,
+        script.language,
+        settings.reviewer,
+        script.dependencies,
+        ai_target=settings.ai_target,
+    )
     if not reviewer.confirm(script.code, result):
         raise AiscriptError("Script rejected; nothing saved.")
     return script

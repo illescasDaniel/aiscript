@@ -137,7 +137,9 @@ def test_given_concurrent_source_edit_when_building_then_each_run_matches_its_sn
     proceed = Event()
     executed: list[str] = []
 
-    def generate(provider: ProviderConfig, name: str, intent: str) -> llm.GeneratedScript:
+    def generate(
+        provider: ProviderConfig, name: str, intent: str, *, max_calls_per_run: int = 1
+    ) -> llm.GeneratedScript:
         if intent == "first":
             entered.set()
             assert proceed.wait(5)

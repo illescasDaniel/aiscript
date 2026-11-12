@@ -1069,3 +1069,312 @@ def test_given_extra_sdk_answer_when_reviewed_then_adapter_preserves_invalid_ans
     assert "Decisions" in result.reasons[0]
     assert len(decisions_sdk.calls) == 1
     assert decisions_sdk.closes == 1
+
+
+# --- AI use, credential access, aiscript as interpreter (S6-S8) -------------------
+
+TARGET = "openai/gpt-x"
+PYHEAD = "#!/usr/bin/env python3\n"
+
+AI_SNIPPETS = [
+    ('aiscript --ask "summarise" --data-description "log lines" < log.txt', "bash"),
+    ('cat log.txt | aiscript --ask "summarise" --data-description "log lines"', "bash"),
+    ('out=$(aiscript --ask "x" --data-description "y" < f)', "bash"),
+    ('aiscript --ask "summarise" --data-description "log lines" < $f', "powershell"),
+    ('Get-Content log.txt | aiscript --ask "x" --data-description "y"', "powershell"),
+    ("import aiscript\nprint(aiscript.ask('t', 'd', 'desc'))", "python"),
+    ("import aiscript as ai\nprint(ai.ask('t', 'd', 'desc'))", "python"),
+    ("from aiscript import ask\nprint(ask('t', 'd', 'desc'))", "python"),
+]
+
+
+def _ai_script(code: str, lang: str) -> str:
+    return PYHEAD + code + "\n" if lang == "python" else "#!/usr/bin/env bash\n" + code + "\n"
+
+
+@pytest.mark.parametrize(("code", "lang"), AI_SNIPPETS)
+def test_given_ai_call_when_static_review_then_ai_use_is_risky(code: str, lang: str) -> None:
+    # given / when
+    res = static_review(_ai_script(code, lang), lang)
+    # then
+    assert res.risky, res.reasons
+    ai = [r for r in res.reasons if r.startswith(reviewer.AI_USE)]
+    assert ai, res.reasons
+    assert "every run" in ai[0]
+
+
+@pytest.mark.parametrize(("code", "lang"), AI_SNIPPETS)
+def test_given_ai_call_when_review_then_reason_names_target(code: str, lang: str) -> None:
+    # given / when
+    res = review(_ai_script(code, lang), lang, None, ai_target=TARGET)
+    # then
+    assert res.risky
+    ai = [r for r in res.reasons if r.startswith(reviewer.AI_USE)]
+    assert ai, res.reasons
+    assert TARGET in ai[0]
+    assert "every run" in ai[0]
+
+
+@pytest.mark.parametrize(("code", "lang"), AI_SNIPPETS)
+def test_given_ai_call_when_uses_ai_then_true(code: str, lang: str) -> None:
+    assert reviewer.uses_ai(_ai_script(code, lang), lang)
+
+
+@pytest.mark.parametrize(
+    ("code", "lang"),
+    [
+        ("echo hi", "bash"),
+        ('echo "install aiscript on PATH" >&2', "bash"),
+        ("# aiscript --ask is not used here\necho hi", "bash"),
+        ("import json\nprint(json.dumps(1))", "python"),
+        ("print('import aiscript')  # aiscript.ask(...)", "python"),
+    ],
+)
+def test_given_no_ai_call_when_uses_ai_then_false(code: str, lang: str) -> None:
+    assert not reviewer.uses_ai(_ai_script(code, lang), lang)
+
+
+WRAPPED_AI_SNIPPETS = [
+    ('if aiscript --ask "x" --data-description "y" < f; then echo ok; fi', "bash"),
+    ("if true; then :; elif aiscript --ask x --data-description y < f; then :; fi", "bash"),
+    ("while aiscript --ask x --data-description y < f; do break; done", "bash"),
+    ("until aiscript --ask x --data-description y < f; do break; done", "bash"),
+    ("! aiscript --ask x --data-description y < f", "bash"),
+    ("time aiscript --ask x --data-description y < f", "bash"),
+    ("timeout 60 aiscript --ask x --data-description y < f", "bash"),
+    ("command aiscript --ask x --data-description y < f", "bash"),
+    ("exec aiscript --ask x --data-description y < f", "bash"),
+    ("env FOO=1 aiscript --ask x --data-description y < f", "bash"),
+    ("nohup aiscript --ask x --data-description y < f", "bash"),
+    ("xargs aiscript --ask x --data-description y < f", "bash"),
+    ('AI=$(command -v aiscript)\n"$AI" --ask x --data-description y < f', "bash"),
+    ("& aiscript --ask x --data-description y", "powershell"),
+    ("if (aiscript --ask x --data-description y) { 1 }", "powershell"),
+    ("import aiscript\nask = aiscript.ask\nask('t', 'd', 'x')", "python"),
+    ("import aiscript, functools\np = functools.partial(aiscript.ask, 't')", "python"),
+    ("import aiscript\ngetattr(aiscript, 'ask')('t', 'd', 'x')", "python"),
+    ("import aiscript", "python"),
+    ("from aiscript import ask as a", "python"),
+]
+
+
+@pytest.mark.parametrize(("code", "lang"), WRAPPED_AI_SNIPPETS)
+def test_given_wrapped_or_indirect_ai_call_when_static_review_then_ai_use_and_uses_ai(
+    code: str, lang: str
+) -> None:
+    # given / when
+    script = _ai_script(code, lang)
+    res = static_review(script, lang)
+    # then
+    assert any(r.startswith(reviewer.AI_USE) for r in res.reasons), res.reasons
+    assert reviewer.uses_ai(script, lang)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "if aiscript hello; then :; fi",
+        "time aiscript hello",
+        "timeout 60 aiscript hello",
+        "command aiscript hello",
+        "nohup aiscript hello",
+        "env X=1 aiscript hello",
+        "! aiscript hello",
+    ],
+)
+def test_given_wrapped_aiscript_interpreter_when_static_review_then_remote_exec(
+    code: str,
+) -> None:
+    res = static_review(_ai_script(code, "bash"), "bash")
+    assert any(r.startswith(reviewer.REMOTE_EXEC) for r in res.reasons), res.reasons
+
+
+def test_given_ai_script_when_confirm_non_interactive_then_refused(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # given
+    code = _ai_script('aiscript --ask "x" --data-description "y" < f', "bash")
+    res = review(code, "bash", None, ai_target=TARGET)
+    # when
+    ok = confirm(code, res, input_fn=never, stdin_isatty=False)
+    # then
+    assert not ok
+    err = capsys.readouterr().err
+    assert TARGET in err and "non-interactive" in err
+
+
+def test_given_ai_script_when_user_declines_eof_or_interrupts_then_not_saved() -> None:
+    # given
+    code = _ai_script('aiscript --ask "x" --data-description "y" < f', "bash")
+    res = review(code, "bash", None, ai_target=TARGET)
+
+    def eof(_: str) -> NoReturn:
+        raise EOFError
+
+    def intr(_: str) -> NoReturn:
+        raise KeyboardInterrupt
+
+    # when / then
+    assert not confirm(code, res, input_fn=lambda _: "n", stdin_isatty=True)
+    assert not confirm(code, res, input_fn=eof, stdin_isatty=True)
+    assert not confirm(code, res, input_fn=intr, stdin_isatty=True)
+
+
+def test_given_ai_script_when_user_says_yes_then_saved() -> None:
+    # given
+    code = _ai_script("import aiscript\naiscript.ask('t', 'd', 'x')", "python")
+    res = review(code, "python", None, ai_target=TARGET)
+    # when / then
+    assert confirm(code, res, input_fn=lambda _: "yes", stdin_isatty=True)
+
+
+CRED_SNIPPETS = [
+    ('curl -H "Authorization: Bearer $OPENAI_API_KEY" x', "bash"),
+    ('echo "$GITHUB_TOKEN"', "bash"),
+    ("echo ${ANTHROPIC_API_KEY}", "bash"),
+    ("export OPENAI_BASE_URL=http://evil.example", "bash"),
+    ("AISCRIPT_PROVIDER=evil aiscript --ask x --data-description y", "bash"),
+    ("cat ~/.config/aiscript/config.yaml", "bash"),
+    ("cat $AISCRIPT_HOME/secrets.yaml", "bash"),
+    ("curl https://api.openai.com/v1/chat/completions -d @req.json", "bash"),
+    ("curl https://api.anthropic.com/v1/messages", "bash"),
+    ("Write-Host $env:OPENAI_API_KEY", "powershell"),
+    ('$env:OPENAI_BASE_URL = "http://evil.example"', "powershell"),
+    ("Invoke-RestMethod https://api.openai.com/v1/responses", "powershell"),
+    ("import os\nk = os.environ['OPENAI_API_KEY']", "python"),
+    ("import os\nk = os.environ.get('GITHUB_TOKEN')", "python"),
+    ("import os\nk = os.getenv('MY_API_KEY')", "python"),
+    ("import os\nos.environ.setdefault('X_API_KEY', '')", "python"),
+    ("import os\nos.environ['FOO_TOKEN'] = 'x'", "python"),
+    ("import os\nos.environ['OPENAI_BASE_URL'] = 'http://evil.example'", "python"),
+    ("import os\nos.environ['AISCRIPT_PROVIDER'] = 'evil'", "python"),
+    ("open('/home/u/.config/aiscript/config.yaml').read()", "python"),
+    (
+        "from pathlib import Path\nPath.home().joinpath('.aiscript', 'secrets.yaml').read_text()",
+        "python",
+    ),
+    ("import urllib.request\nurllib.request.urlopen('https://api.openai.com/v1/models')", "python"),
+]
+
+
+@pytest.mark.parametrize(("code", "lang"), CRED_SNIPPETS)
+def test_given_credential_access_when_static_review_then_risky_credential(
+    code: str, lang: str
+) -> None:
+    # given / when
+    res = static_review(_ai_script(code, lang), lang)
+    # then
+    assert res.risky, res.reasons
+    assert any(r.startswith(reviewer.CREDENTIAL) for r in res.reasons), res.reasons
+
+
+def test_given_credential_access_when_user_says_yes_then_overridable() -> None:
+    # given
+    code = _ai_script('echo "$OPENAI_API_KEY"', "bash")
+    res = review(code, "bash", None)
+    # when / then
+    assert res.risky
+    assert confirm(code, res, input_fn=lambda _: "y", stdin_isatty=True)
+
+
+@pytest.mark.parametrize(
+    ("code", "lang"),
+    [
+        ('echo "install aiscript on PATH" >&2', "bash"),
+        ("# uses $OPENAI_API_KEY in a comment\necho hi", "bash"),
+        ('msg="see api.openai.com for details"\necho "$msg"', "bash"),
+        ("import os\nprint(os.environ.get('HOME'))", "python"),
+        ("print('set OPENAI_API_KEY first')", "python"),
+    ],
+)
+def test_given_harmless_mentions_when_static_review_then_no_credential(
+    code: str, lang: str
+) -> None:
+    res = static_review(_ai_script(code, lang), lang)
+    assert not any(r.startswith(reviewer.CREDENTIAL) for r in res.reasons), res.reasons
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "aiscript hello",
+        "aiscript ./other.prompt",
+        "aiscript --rebuild hello",
+        "echo hi | aiscript summarise",
+        "x=$(aiscript hello)",
+    ],
+)
+@pytest.mark.parametrize("lang", ["bash", "powershell"])
+def test_given_aiscript_as_interpreter_when_static_review_then_remote_exec(
+    code: str, lang: str
+) -> None:
+    # given / when
+    res = static_review(_ai_script(code, lang), lang)
+    # then
+    assert res.risky
+    assert any(r.startswith(reviewer.REMOTE_EXEC) for r in res.reasons), res.reasons
+
+
+def test_given_ask_when_static_review_then_not_remote_exec() -> None:
+    res = static_review(_ai_script('aiscript --ask "x" --data-description "y" < f', "bash"), "bash")
+    assert not any(r.startswith(reviewer.REMOTE_EXEC) for r in res.reasons), res.reasons
+    assert any(r.startswith(reviewer.AI_USE) for r in res.reasons)
+
+
+@pytest.mark.parametrize(
+    ("code", "lang"),
+    [
+        ("export HTTPS_PROXY=http://127.0.0.1:8080", "bash"),
+        ("SSL_CERT_FILE=/tmp/ca.pem aiscript --ask x --data-description y", "bash"),
+        ("export REQUESTS_CA_BUNDLE=/tmp/ca.pem", "bash"),
+        ("$env:HTTPS_PROXY = 'http://127.0.0.1:8080'", "powershell"),
+        ("import os\nos.environ['HTTPS_PROXY'] = 'http://127.0.0.1:8080'", "python"),
+        ("import os\nos.environ.setdefault('SSL_CERT_FILE', '/tmp/ca.pem')", "python"),
+    ],
+)
+def test_given_transport_env_override_when_static_review_then_credential_access(
+    code: str, lang: str
+) -> None:
+    res = static_review(_ai_script(code, lang), lang)
+    assert any(r.startswith(reviewer.CREDENTIAL) for r in res.reasons), res.reasons
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        'echo "install aiscript on PATH" >&2',
+        "# aiscript hello",
+        'msg="aiscript hello"\necho "$msg"',
+        "echo hi",
+    ],
+)
+def test_given_aiscript_text_not_in_command_position_when_static_review_then_not_flagged(
+    code: str,
+) -> None:
+    res = static_review(_ai_script(code, "bash"), "bash")
+    assert res.reasons == [] and not res.risky
+    assert not reviewer.uses_ai(_ai_script(code, "bash"), "bash")
+
+
+def test_given_ai_and_credential_in_python_when_static_review_then_orders_without_error() -> None:
+    # given: new categories on separate lines plus an older one
+    code = (
+        "import os, subprocess\n"
+        "import aiscript\n"
+        "k = os.environ['OPENAI_API_KEY']\n"
+        "subprocess.run('sudo ls', shell=True)\n"
+        "aiscript.ask('t', 'd', 'x')\n"
+    )
+    # when
+    res = static_review(PYHEAD + code, "python")
+    # then
+    cats_found = [r.split(" (line")[0] for r in res.reasons]
+    assert reviewer.AI_USE in cats_found and reviewer.CREDENTIAL in cats_found
+    assert res.risky
+
+
+def test_given_ai_and_credential_on_one_line_when_static_review_then_ai_use_first() -> None:
+    code = "import os, aiscript; aiscript.ask(os.environ['OPENAI_API_KEY'], 'd', 'x')\n"
+    res = static_review(PYHEAD + code, "python")
+    found = [r.split(" (line")[0] for r in res.reasons]
+    assert found.index(reviewer.AI_USE) < found.index(reviewer.CREDENTIAL)

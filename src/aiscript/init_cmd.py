@@ -21,8 +21,17 @@ CONFIG_TEMPLATE = """\
 # Keys can also come from the environment: OPENAI_API_KEY, OPENAI_DECISIONS_API_KEY,
 # TYPESAFE_API_KEY, <PROVIDER>_API_KEY.
 
-# Provider that writes the scripts (override with $AISCRIPT_PROVIDER).
+# Provider that writes the scripts (override with $AISCRIPT_PROVIDER). It is also the
+# provider used for AI calls inside scripts (aiscript.ask / aiscript --ask), which ignore
+# $AISCRIPT_PROVIDER, so a script never reaches a different provider than the one set here.
 default_provider: openai
+
+# Optional limits for AI calls inside scripts (uncomment to change; defaults shown).
+# ai:
+#   max_input_kb: 128         # refuse input at or above this size
+#   max_calls_per_run: 1      # AI calls one script run may make
+#   timeout_seconds: 60
+#   max_output_tokens: 4000
 
 # Decision model that reviews scripts on top of the built-in static scan.
 # Use `ollaya` for a local, keyless review; comment out to use only the static scan.

@@ -56,8 +56,9 @@ review contract.
 
 | Key | Meaning |
 |---|---|
-| `default_provider` | Provider that writes the scripts. Default `openai`. `$AISCRIPT_PROVIDER` overrides it. |
+| `default_provider` | Provider that writes the scripts, and also answers the AI calls made by generated scripts (`aiscript.ask`). Default `openai`. `$AISCRIPT_PROVIDER` overrides it for generation only. |
 | `reviewer_provider` | Provider used as the decision model for the safety review. Omit to use only the static scan. |
+| `ai` | Optional [limits](#ai-limits) for AI calls inside scripts. |
 | `providers` | Mapping of provider name to its settings. |
 
 If `providers` is non-empty, the generator and the reviewer must both be listed in it. If it is
@@ -162,6 +163,33 @@ such as Ollama.
 
 If nothing matches, aiscript stops with an error naming the variables to set. Ollaya needs a key
 only if the server was started with `OLLAYA_API_KEY`.
+
+## AI limits
+
+Optional `ai:` block; every key is optional and unknown keys are a configuration error. Values
+must be integers within the bounds. Defaults:
+
+```yaml
+ai:
+  max_input_kb: 128        # 1-1024; input at or above this is refused, never truncated
+  max_calls_per_run: 1     # 1-100; the next call in one run exits 9
+  timeout_seconds: 60      # 1-600; per request
+  max_output_tokens: 4000  # 1-32000
+```
+
+Retries are fixed at 2. At run time the call uses only the `default_provider` entry in the YAML
+(it must be `kind: openai`, `api: responses` or `chat`); `AISCRIPT_PROVIDER`, `AISCRIPT_MODEL`
+and `OPENAI_BASE_URL` are ignored so a script cannot redirect the key.
+
+Key resolution for AI calls, first match wins:
+
+1. `api_key` in the provider's `config.yaml` entry
+2. `<NAME>_API_KEY`
+3. `OPENAI_API_KEY`
+
+Keys from the environment (2 and 3) are sent only to `api.openai.com`; any other endpoint needs
+its key in the YAML entry. Loopback endpoints (`localhost`, `127.0.0.1`, `::1`) need no key. A
+broken reviewer configuration does not affect AI calls.
 
 ## Model resolution
 

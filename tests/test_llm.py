@@ -1,3 +1,4 @@
+import inspect
 import sys
 from dataclasses import replace
 from types import SimpleNamespace
@@ -380,3 +381,90 @@ def test_deps_rejected(dep: str) -> None:
 def test_deps_not_a_list() -> None:
     with pytest.raises(AiscriptError):
         llm.parse_dependencies(block('# dependencies = "requests"'))
+
+
+# ---- AI at run time section (S9, C7)
+
+
+def _has(text: str, *alternatives: str) -> bool:
+    low = text.lower()
+    return any(a.lower() in low for a in alternatives)
+
+
+@pytest.mark.parametrize("shell", ["bash", "powershell"])
+def test_given_any_shell_when_system_prompt_then_ai_section_present_with_cap(shell: str) -> None:
+    # given / when
+    s = llm.system_prompt(shell, "env", max_calls_per_run=37)
+    # then
+    assert "AI at run time" in s
+    assert llm.ai_section(shell, 37) in s
+    assert "37" in llm.ai_section(shell, 37)
+
+
+def test_given_default_when_system_prompt_then_cap_is_one() -> None:
+    assert llm.system_prompt("bash", "env") == llm.system_prompt("bash", "env", max_calls_per_run=1)
+    assert "AI at run time" in llm.system_prompt("bash", "env")
+    default = inspect.signature(llm.generate_script).parameters["max_calls_per_run"].default
+    assert default == 1
+
+
+def test_given_ai_section_when_read_then_states_precision_rules() -> None:
+    # given / when
+    s = llm.ai_section("bash", 2)
+    # then
+    assert "aiscript --ask" in s and "aiscript.ask" in s
+    assert "data_description" in s or "--data-description" in s
+    assert _has(s, "schema")
+    assert _has(s, "batch", "one call", "single call")  # one batched call
+    assert _has(s, "exit code", "status", "fail")  # check status, fail loudly
+    assert _has(s, "never eval", "never execute", "do not eval", "never run")
+    assert _has(s, "api key", "credential")  # never read keys
+    assert _has(s, "provider api", "provider's api", "call a provider")
+    assert _has(s, "interpreter")  # never use aiscript as an interpreter
+
+
+def test_given_ai_section_when_read_then_has_missing_aiscript_rule() -> None:
+    # given / when
+    s = llm.ai_section("bash", 1)
+    # then (F5, S9)
+    assert _has(s, "not on path", "is missing", "not installed", "not found", "command -v")
+    assert _has(s, "non-zero", "nonzero")
+    assert _has(s, "error")
+
+
+def test_given_powershell_when_ai_section_then_has_encoding_rule() -> None:
+    s = llm.ai_section("powershell", 1)
+    assert _has(s, "utf-8", "utf8")
+    assert _has(s, "encoding")
+
+
+def test_given_section_with_json_braces_when_system_prompt_then_formatting_intact() -> None:
+    # given
+    section = llm.ai_section("bash", 5)
+    # when
+    s = llm.system_prompt("bash", "- Host OS: X", max_calls_per_run=5)
+    # then
+    assert "{" in section
+    assert section in s
+    assert "{{" not in s and "}}" not in s
+    assert "- Host OS: X" in s
+
+
+def test_given_cap_when_generate_script_then_system_prompt_has_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # given
+    got = patch_gen(monkeypatch, "echo hi")
+    # when
+    llm.generate_script(P, "x", "y", max_calls_per_run=37)
+    # then
+    assert "AI at run time" in got["system"]
+    assert llm.ai_section("bash", 37) in got["system"]
+
+
+def test_given_no_cap_when_generate_script_then_section_has_default_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    got = patch_gen(monkeypatch, "echo hi")
+    llm.generate_script(P, "x", "y")
+    assert llm.ai_section("bash", 1) in got["system"]

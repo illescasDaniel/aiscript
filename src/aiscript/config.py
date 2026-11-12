@@ -6,18 +6,19 @@ import os
 import re
 import stat
 import sys
-from dataclasses import dataclass
-from typing import Any
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any, Final, Literal
 from urllib.parse import urlparse
 
-from aiscript.errors import ConfigError
+from aiscript.errors import AskConfigError, ConfigError
 from aiscript.paths import config_path, is_windows, legacy_secrets_path
 
 
 @dataclass(frozen=True)
 class ProviderConfig:
     name: str
-    api_key: str | None
+    api_key: str | None = field(repr=False)
     base_url: str | None
     model: str
     kind: str = "openai"  # "openai" (OpenAI-compatible) or "jev" (TypeSafe System One; Ollaya too)
@@ -26,10 +27,41 @@ class ProviderConfig:
     temperature: float | None = None  # sent only when set (GPT-6 rejects it unless effort=none)
 
 
+OFFICIAL_OPENAI_URL: Final = "https://api.openai.com/v1"
+ASK_RETRIES: Final = 2
+
+
+@dataclass(frozen=True)
+class AiSettings:
+    """The optional ``ai:`` section of config.yaml (run-time limits of ``--ask``)."""
+
+    max_input_kb: int = 128
+    max_calls_per_run: int = 1
+    timeout_seconds: int = 60
+    max_output_tokens: int = 4000
+
+
+@dataclass(frozen=True)
+class AskTarget:
+    """Run-time endpoint of ``--ask``: the YAML ``default_provider`` only, never the environment."""
+
+    provider: str
+    model: str
+    base_url: str  # never None: the official URL is pinned
+    api: Literal["responses", "chat"]
+    official: bool
+    local: bool
+    reasoning_effort: str | None = None
+    temperature: float | None = None
+
+
 @dataclass(frozen=True)
 class Settings:
     generator: ProviderConfig
     reviewer: ProviderConfig | None
+    ai: AiSettings = AiSettings()
+    ai_target: str = "the default provider"
+    known_secrets: tuple[str, ...] = field(default=(), repr=False)
 
 
 DEFAULT_PROVIDER = "openai"
@@ -77,7 +109,10 @@ def load_raw_config() -> dict[str, Any]:
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
-        raise ConfigError(f"Invalid YAML in {path}: {exc}") from exc
+        # No PyYAML snippet: the offending line may hold an api_key.
+        mark = getattr(exc, "problem_mark", None)
+        where = f" (line {mark.line + 1})" if mark is not None else ""
+        raise ConfigError(f"Invalid YAML in {path}{where}") from None
     except OSError as exc:
         raise ConfigError(f"Cannot read {path}: {exc}") from exc
     if data is None:
@@ -294,6 +329,7 @@ def _resolve_provider(
 def load_settings() -> Settings:
     """Resolve generator/reviewer providers; raise ConfigError with actionable text."""
     raw = load_raw_config()
+    ai = load_ai_settings(raw)
     gen_name = (
         _clean(os.environ.get("AISCRIPT_PROVIDER"))
         or _clean(raw.get("default_provider"))
@@ -311,4 +347,175 @@ def load_settings() -> Settings:
     rev_name = _clean(raw.get("reviewer_provider"))
     if rev_name:
         reviewer = _resolve_provider(rev_name, raw, generator=False, fallback_model=generator.model)
-    return Settings(generator=generator, reviewer=reviewer)
+    return Settings(
+        generator=generator,
+        reviewer=reviewer,
+        ai=ai,
+        ai_target=describe_ask_target(raw),
+        known_secrets=collect_known_secrets(raw, os.environ),
+    )
+
+
+_AI_BOUNDS: Final = {
+    "max_input_kb": (1, 1024),
+    "max_calls_per_run": (1, 100),
+    "timeout_seconds": (1, 600),
+    "max_output_tokens": (1, 32000),
+}
+_MIN_SECRET_LENGTH: Final = 8
+_KNOWN_KEY_ENV_NAMES: Final = (
+    "OPENAI_API_KEY",
+    "OPENAI_DECISIONS_API_KEY",
+    "TYPESAFE_API_KEY",
+    "OLLAYA_API_KEY",
+)
+
+
+def load_ai_settings(raw: Mapping[str, Any]) -> AiSettings:
+    """Read and bound-check the ``ai:`` section; ConfigError on a bad value (F1)."""
+    path = config_path()
+    block = raw.get("ai")
+    if block is None:
+        return AiSettings()
+    if not isinstance(block, dict):
+        raise ConfigError(f"'ai' in {path} must be a mapping.")
+    for key in block:
+        if key not in _AI_BOUNDS:
+            raise ConfigError(
+                f"Unknown key '{key}' in the 'ai' section of {path} "
+                f"(expected: {', '.join(_AI_BOUNDS)})."
+            )
+    values: dict[str, int] = {}
+    for key, (low, high) in _AI_BOUNDS.items():
+        if key not in block:
+            continue
+        value = block[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            raise ConfigError(f"'ai.{key}' in {path} must be an integer from {low} to {high}.")
+        values[key] = value
+    return AiSettings(**values)
+
+
+def identify_ask_target(raw: Mapping[str, Any]) -> AskTarget:
+    """Name the run-time endpoint from config.yaml alone: no environment, no key (F7)."""
+    path = config_path()
+    name = _clean(raw.get("default_provider")) or DEFAULT_PROVIDER
+    providers = raw.get("providers")
+    if providers is None:
+        providers = {}
+    if not isinstance(providers, dict):
+        raise AskConfigError(f"'providers' in {path} must be a mapping.")
+    if providers and name not in providers:
+        known = ", ".join(sorted(str(k) for k in providers))
+        raise AskConfigError(
+            f"Provider '{name}' is not defined in {path} (known providers: {known})."
+        )
+    entry = providers.get(name) or {}
+    if not isinstance(entry, dict):
+        raise AskConfigError(f"Provider '{name}' in {path} must be a mapping.")
+    default_kind = (
+        "jev"
+        if name.lower() in _JEV_NAMES
+        else "ollaya"
+        if name.lower() in _OLLAYA_NAMES
+        else "openai"
+    )
+    kind = (_clean(entry.get("kind")) or default_kind).lower()
+    api_name = (_clean(entry.get("api")) or "").lower()
+    if kind != "openai":
+        raise AskConfigError(
+            f"Provider '{name}' in {path} is not OpenAI-compatible (kind '{kind}'); "
+            "`--ask` needs an OpenAI-compatible default_provider."
+        )
+    if api_name not in ("", "responses", "chat"):
+        raise AskConfigError(
+            f"Provider '{name}' in {path} uses api '{api_name}'; "
+            "`--ask` supports responses or chat."
+        )
+    configured_url = _clean(entry.get("base_url")) or _clean(entry.get("endpoint"))
+    official = _is_official_openai(configured_url)
+    api: Literal["responses", "chat"] = (
+        "chat" if api_name == "chat" else "responses" if api_name or official else "chat"
+    )
+    temperature = entry.get("temperature")
+    if temperature is not None:
+        try:
+            temperature = float(temperature)
+        except (TypeError, ValueError):
+            raise AskConfigError(
+                f"Provider '{name}' in {path}: temperature must be a number."
+            ) from None
+    return AskTarget(
+        provider=name,
+        model=_clean(entry.get("model")) or DEFAULT_MODEL,
+        base_url=configured_url or OFFICIAL_OPENAI_URL,
+        api=api,
+        official=official,
+        local=is_local(configured_url),
+        reasoning_effort=_clean(entry.get("reasoning_effort")),
+        temperature=temperature,
+    )
+
+
+def _yaml_key(raw: Mapping[str, Any], provider: str) -> str | None:
+    """The ``api_key`` of a providers entry, None when absent or a template placeholder."""
+    providers = raw.get("providers")
+    if not isinstance(providers, dict):
+        return None
+    entry = providers.get(provider)
+    if not isinstance(entry, dict):
+        return None
+    key = _clean(entry.get("api_key"))
+    return None if key is None or key.endswith("...") else key
+
+
+def resolve_ask_key(target: AskTarget, raw: Mapping[str, Any], environ: Mapping[str, str]) -> str:
+    """Pick the API key for ``target`` in the C4 order (F7, S19)."""
+    key = _yaml_key(raw, target.provider)
+    if key is not None:
+        return key
+    if target.official:
+        env_name = _env_key_name(target.provider)
+        for name in (env_name, "OPENAI_API_KEY"):
+            key = _clean(environ.get(name))
+            if key is not None:
+                return key
+        raise AskConfigError(
+            f"No API key for provider '{target.provider}'. Set `api_key` for it in "
+            f"{config_path()} or export {env_name} or OPENAI_API_KEY."
+        )
+    if target.local:
+        return "not-needed"
+    raise AskConfigError(
+        f"Provider '{target.provider}' uses a non-official endpoint, so its key must be set as "
+        f"`api_key` in {config_path()}; {_env_key_name(target.provider)} and OPENAI_API_KEY "
+        "are only used for api.openai.com."
+    )
+
+
+def describe_ask_target(raw: Mapping[str, Any]) -> str:
+    """Human-readable provider name for the build-time "AI use" finding; never raises."""
+    try:
+        target = identify_ask_target(raw)
+    except AskConfigError as exc:
+        return f"the default provider (not usable for --ask: {exc})"
+    return f"provider '{target.provider}' (model {target.model})"
+
+
+def collect_known_secrets(raw: Mapping[str, Any], environ: Mapping[str, str]) -> tuple[str, ...]:
+    """Every configured or exported API key, for the secret scanner (C8)."""
+    providers = raw.get("providers")
+    names = [str(k) for k in providers] if isinstance(providers, dict) else []
+    candidates: list[str | None] = [_yaml_key(raw, n) for n in names]
+    env_names = [*_KNOWN_KEY_ENV_NAMES, *(_env_key_name(n) for n in names)]
+    candidates.extend(_clean(environ.get(n)) for n in env_names)
+    found: dict[str, None] = {}
+    for value in candidates:
+        if (
+            value is not None
+            and len(value) >= _MIN_SECRET_LENGTH
+            and value != "not-needed"
+            and not value.endswith("...")
+        ):
+            found[value] = None
+    return tuple(found)
