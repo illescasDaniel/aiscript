@@ -437,11 +437,11 @@ def _good(fake: FakeOpenAI) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("name", "config_kwargs", "task", "data", "code"),
     [
-        ("f6", {}, " ", b"x", 2),
-        ("config", {"ai": "ai:\n  max_calls_per_run: 0\n"}, "t", b"x", 3),
-        ("f7", {"base_url": "https://example.invalid/v1"}, "t", b"x", 3),
-        ("f8", {}, "t", b"\xff", 4),
-        ("f8-size", {}, "t", b"a" * DEFAULT_LIMIT, 4),
+        pytest.param("f6", {}, " ", b"x", 2, id="f6"),
+        pytest.param("config", {"ai": "ai:\n  max_calls_per_run: 0\n"}, "t", b"x", 3, id="config"),
+        pytest.param("f7", {"base_url": "https://example.invalid/v1"}, "t", b"x", 3, id="f7"),
+        pytest.param("f8", {}, "t", b"\xff", 4, id="f8"),
+        pytest.param("f8-size", {}, "t", b"a" * DEFAULT_LIMIT, 4, id="f8-size"),
     ],
 )
 def test_given_failing_earlier_check_when_ask_then_no_cap_slot_is_claimed(

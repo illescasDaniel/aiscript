@@ -4,6 +4,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -46,8 +47,8 @@ def on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A fake `aiscript` executable first on PATH."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    exe = bin_dir / "aiscript"
-    exe.write_text("#!/bin/sh\n")
+    exe = bin_dir / ("aiscript.bat" if sys.platform == "win32" else "aiscript")
+    exe.write_text("@echo off\n" if sys.platform == "win32" else "#!/bin/sh\n")
     exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", str(bin_dir))
     return bin_dir

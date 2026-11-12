@@ -101,7 +101,8 @@ def test_given_run_counter_when_entered_then_a_private_directory_exists() -> Non
     with run_counter() as directory:
         # then
         assert directory.is_dir()
-        assert (directory.stat().st_mode & 0o077) == 0
+        if sys.platform != "win32":  # POSIX modes are not meaningful on Windows
+            assert (directory.stat().st_mode & 0o077) == 0
         assert list(directory.iterdir()) == []
 
 
