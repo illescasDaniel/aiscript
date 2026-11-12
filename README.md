@@ -72,6 +72,50 @@ Generated scripts can ask your configured model to summarise, classify or extrac
 is sent to the provider on every run. See [usage](docs/usage.md#ai-inside-scripts) and
 [privacy](docs/safety.md#privacy).
 
+For example, save this as `standup`. Git can list commits but can't summarise them, so the prompt
+asks for that step explicitly:
+
+```text
+#!/usr/bin/env aiscript
+
+Print a short standup note for the git repository in the current directory. Collect my commits
+from the last 24 hours (by the configured git user, all branches), then use AI to summarise them
+into "Done" and "Next" bullet points, at most 5 bullets in total. If there are no commits, say so
+without calling AI. Do not modify the repository.
+```
+
+```sh
+chmod +x standup
+cd ~/projects/my-app && ~/Documents/standup
+```
+
+The generated program runs `git log` itself and hands only that output to the model through
+`aiscript.ask`. Only the commit data is sent to your provider, and only when the script runs.
+
+### How it works
+
+```mermaid
+flowchart TD
+    A["./standup"] --> B{"Cached build?"}
+    B -- no --> C["Generator model writes the program"]
+    C --> D["Reviewer model checks it"]
+    D --> E{"Risky or review failed?"}
+    E -- yes --> F["You approve or reject"]
+    E -- no --> G["Save to cache"]
+    F -- approve --> G
+    F -- reject --> X["Stop"]
+    B -- yes --> H
+    G --> H["Run the program"]
+    H --> I["Collect data, e.g. git log"]
+    I --> J["aiscript.ask(task, data)"]
+    J --> K["aiscript calls your configured provider<br/>(the API key stays inside aiscript)"]
+    K --> L["Text or validated JSON comes back"]
+    L --> M["Script prints the result"]
+```
+
+Generation and review happen once. Every later run skips straight to the cached program, and only
+the `ask` call talks to the model.
+
 ## Safety review / decision models
 
 Generated programs are checked before they are saved or run. Risky programs need approval; review
