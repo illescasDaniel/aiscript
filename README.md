@@ -18,7 +18,17 @@ pipx install aiscript
 pip install aiscript
 ```
 
-See [installation and PATH setup](docs/installation.md) for upgrades and troubleshooting.
+To update to the latest version, use the same tool you installed with:
+
+```sh
+uv tool upgrade aiscript
+# or
+pipx upgrade aiscript
+# or
+pip install --upgrade aiscript
+```
+
+See [installation and PATH setup](docs/installation.md) for troubleshooting.
 
 ## Quickstart
 
