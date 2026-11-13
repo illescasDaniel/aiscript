@@ -1,7 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [1.5.0] - 2026-11-13
 
+- Add native Anthropic and Gemini providers and ACP agent providers (`codex-acp`, `claude-acp`,
+  `gemini-acp`, `opencode-go-acp`, `glm-acp`) to write scripts and answer AI calls inside scripts;
+  see docs/configuration.md. Existing OpenAI configuration is unchanged.
 - Add QSIV as an optional local safety reviewer (`reviewer_provider: qsiv`): a small decision
   model on your own NVIDIA GPU that answers the same four questions as Jev, with no key and no
   network. Install with `aiscript[qsiv]` and run `uvx qsiv-runtime setup`; Linux x86_64 only, off by
