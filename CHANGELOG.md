@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+- Add QSIV as an optional local safety reviewer (`reviewer_provider: qsiv`): a small decision
+  model on your own NVIDIA GPU that answers the same four questions as Jev, with no key and no
+  network. Install with `aiscript[qsiv]` and run `uvx qsiv-runtime setup`; Linux x86_64 only, off by
+  default. Failures (missing package, GPU or model, timeouts) fail closed as
+  "Reviewer unavailable: ...". Existing configuration is unchanged.
+
 ## [1.4.0] - 2026-11-12
 
 - Let generated scripts call the configured `default_provider` model through `aiscript.ask`

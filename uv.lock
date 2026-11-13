@@ -19,6 +19,11 @@ dependencies = [
     { name = "typesafe-sdk" },
 ]
 
+[package.optional-dependencies]
+qsiv = [
+    { name = "qsiv-runtime" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
@@ -32,8 +37,10 @@ requires-dist = [
     { name = "httpx2", specifier = ">=2.14.0" },
     { name = "openai", specifier = ">=3.35.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "qsiv-runtime", marker = "extra == 'qsiv'", specifier = ">=0.1,<0.2" },
     { name = "typesafe-sdk", specifier = ">=0.7.5" },
 ]
+provides-extras = ["qsiv"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -868,6 +875,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/da/92/1446574745d74df0c92e6aa4a7b0b3130706a4142b2d1a5869f2eaa423c6/pyyaml-6.0.3-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:16249ee61e95f858e83976573de0f5b2893b3677ba71c9dd36b9cf8be9ac6d65", size = 829923, upload-time = "2025-09-25T21:32:54.537Z" },
     { url = "https://files.pythonhosted.org/packages/f0/7a/1c7270340330e575b92f397352af856a8c06f230aa3e76f86b39d01b416a/pyyaml-6.0.3-cp314-cp314t-win_amd64.whl", hash = "sha256:4ad1906908f2f5ae4e5a8ddfce73c320c2a1429ec52eafd27138b7f1cbe341c9", size = 174062, upload-time = "2025-09-25T21:32:55.767Z" },
     { url = "https://files.pythonhosted.org/packages/f1/12/de94a39c2ef588c7e6455cfbe7343d3b2dc9d6b6b2f40c4c6565744c873d/pyyaml-6.0.3-cp314-cp314t-win_arm64.whl", hash = "sha256:ebc55a14a21cb14062aa4162f906cd962b28e2e9ea38f9b4391244cd8de4ae0b", size = 149341, upload-time = "2025-09-25T21:32:56.828Z" },
+]
+
+[[package]]
+name = "qsiv-runtime"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b7/15/99c58e97aff260ddb11389933e3838b080906b9a91cba1ea0439aaad0e5a/qsiv_runtime-0.1.0.tar.gz", hash = "sha256:6b376e0535c21b9aa94cb3ced779ac608ad15d1ffcd7017508c2b094016673b4", size = 45545, upload-time = "2026-11-13T14:03:31.391Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/ea/217622bd0f9a0b32d7b7758e26d18ce45f2b9b29330663541a43a85e6447/qsiv_runtime-0.1.0-py3-none-any.whl", hash = "sha256:1a4dfdacc860a45fcec0794652675b6058869c77d924bc21d21cd50ba2b40b0f", size = 30999, upload-time = "2026-11-13T14:03:30.063Z" },
 ]
 
 [[package]]

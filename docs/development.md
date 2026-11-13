@@ -22,6 +22,10 @@ uv run task dev --ask="reply with one word" --data-description="a word" <<< "hi"
 Any other aiscript command works the same way (`uv run task dev sizes ~/Downloads`). Set
 `AISCRIPT_HOME` yourself to use another folder. To start over, delete `.dev/`.
 
+The optional `qsiv` extra installs [`qsiv-runtime`](https://pypi.org/project/qsiv-runtime/) from PyPI
+(`uv sync --extra qsiv`). The QSIV tests use a fake `qsiv_runtime` module (`tests/fake_qsiv_runtime.py`) and need
+neither the package nor a GPU.
+
 Tests make no external network calls: the LLM layer is monkeypatched, and the AI-call tests run
 against `tests/fake_openai.py`, a local fake OpenAI-compatible HTTP server.
 
@@ -32,6 +36,7 @@ src/aiscript/
 ├── cli.py        # argument dispatch, --edit / --rebuild / --remove, run flow
 ├── config.py     # config.yaml + environment loading, provider resolution
 ├── init_cmd.py   # `--init`: dirs, config template, .gitignore
+├── qsiv.py       # QSIV reviewer port and adapter (lazy import of the optional qsiv-runtime package)
 ├── paths.py      # config root, prompt/function paths, name validation, OS/shell detection
 ├── builder.py    # staleness check and build pipeline (generate, review, atomic write)
 ├── llm.py        # OpenAI client, system prompt, script generation, language/dependency parsing

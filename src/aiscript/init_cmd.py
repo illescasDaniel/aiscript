@@ -40,8 +40,9 @@ default_provider: openai
 #   max_response_kib: 1024  # 1–16384 KiB
 
 # Decision model that reviews scripts on top of the built-in static scan.
-# Use `ollaya` for a local, keyless review; comment out to use only the static scan.
+# Use `ollaya` or `qsiv` for a local, keyless review; comment out to use only the static scan.
 reviewer_provider: jev
+# reviewer_provider: qsiv
 
 providers:
   # OpenAI (or any OpenAI-compatible API). API key: https://platform.openai.com/api-keys
@@ -86,6 +87,15 @@ providers:
   # Uses Ollaya for a local decision model (https://ollaya.dev), model example: jevk5:4b
   # ollaya:
   #   model: "jevk5:4b"
+
+  # QSIV: a small local GPU model as reviewer (Linux x86_64, NVIDIA GPU with compute capability
+  # 8.9+). No key, no network. Install: uv tool install "aiscript[qsiv]", then:
+  # uvx qsiv-runtime setup
+  # Select it above with `reviewer_provider: qsiv`.
+  # qsiv:
+  #   runtime: fp8   # fp8 | reference
+  #   # model_directory: ~/.local/share/qsiv-runtime/model
+  #   # python: ~/.local/share/qsiv-runtime/venv/bin/python
 
   # Uses Ollama for a local LLM to create the scripts (set `default_provider: ollama`)
   # ollama:

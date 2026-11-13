@@ -79,3 +79,11 @@ None.
 - [x] Architecture approved; tests and implementation built; gate green, 1403 tests (2026-11-13).
 - [x] QA (6 defects) and grade (NEEDS WORK); both fix rounds used (2026-11-13).
 - [ ] Decide G2 (connector qualification) and Q3/G6 (empty-answer exit code); update SPEC.md traceability; commit when authorized.
+
+
+## 2026-11-13: QSIV reviewer provider
+
+- [x] Multi-provider committed and pushed (3214a92), not released.
+- [x] QSIV design, spec (+revision), architecture approved; qsiv-runtime built (122 tests), verified on a real GPU, regraded PASS, published 0.1.0 to PyPI.
+- [x] aiscript adoption (1489 tests); dev path source removed, lock on PyPI.
+- [ ] Release aiscript with QSIV (needs authorization); migrate agemem to qsiv-runtime (separate task, incl. its cwd hardening gap); live check with a real LLM generation + QSIV reviewer.

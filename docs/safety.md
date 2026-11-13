@@ -111,6 +111,40 @@ Defaults: model `jevk5:4b`, address `http://localhost:11435` (override with `bas
 `$OLLAYA_HOST`). A key is only needed if the server sets `OLLAYA_API_KEY`. If the server is
 unreachable, the review fails closed and the message asks whether `ollaya serve` is running.
 
+### QSIV (local GPU)
+
+QSIV is a small decision model that runs on your own GPU through the optional `qsiv-runtime`
+package. It asks the same four yes/no questions as Jev (privilege escalation, filesystem,
+networking, remote code execution) and gets four probabilities back. A category is flagged when
+its probability is at least 0.5, compared on the unrounded value (a reason reads
+`QSIV review: Filesystem (p=0.93)`). A safe answer never clears a static finding or the
+dependency warning. aiscript re-checks every answer: the wrong count, or a value that is not a
+number between 0 and 1, rejects the whole answer.
+
+Requirements: Linux x86_64 and an NVIDIA GPU with compute capability 8.9 or higher. Install with
+`uv tool install "aiscript[qsiv]"` and run `uvx qsiv-runtime setup` once (or `uv tool install qsiv-runtime`, which puts the command
+on your PATH); `uvx qsiv-runtime doctor` checks
+the machine (see [configuration](configuration.md#qsiv-local-gpu-reviewer)).
+
+Failure handling is fail-closed: if the package is not installed, the GPU or model is missing,
+the service does not answer, the script is over the model's input limit (65,536 tokens over the
+rendered request; it is never truncated and is rejected as `too_large` before inference), the GPU
+runs out of memory (on 8 GB GPUs, states above about 49K tokens fail below the limit and report as a
+service failure) or the answer is invalid, the result is risky with `Reviewer unavailable: <cause>`, plus the command to
+run when one fixes it. Interactively you can still approve the script; non-interactively it is
+refused.
+
+One model stays resident machine-wide (the service exits after 300 s idle), so aiscript and other
+tools using `qsiv-runtime` share it; a different model configuration is refused while another is
+loaded. The runtime runs in a local virtualenv that aiscript does not sandbox: trust it as you
+trust any tool you install. It is started without variables whose names contain `API_KEY`, `APIKEY`, `TOKEN`, `SECRET`,
+`PASSWORD`, `PASSWD`, `CREDENTIAL`, `PRIVATE_KEY` or `ACCESS_KEY`, or have a whole segment `AUTH`
+(`SSH_AUTH_SOCK`; `AUTHOR` stays), and never downloads anything while reviewing.
+
+Very long scripts dilute the QSIV signal (remote-code probability
+0.95 at about 300 tokens, 0.13 at about 47K), so the static scan still runs and a safe QSIV answer
+never clears static findings.
+
 ### OpenAI-compatible reviewer
 
 A provider of kind `openai` using `responses` or `chat` can also be the reviewer. It is asked for a strict JSON verdict
@@ -187,7 +221,10 @@ nothing is saved. If stdin is not a terminal, risky scripts are refused outright
   installed.
 - **Review**: with Jev (hosted), the generated script, its language and its dependency list are
   sent to TypeSafe AI.
-  Use `reviewer_provider: ollaya` (local) or leave it unset to keep scripts on your machine.
+  Use `reviewer_provider: ollaya` or `qsiv` (both local) or leave it unset to keep scripts on
+  your machine.
+- **QSIV review**: the script stays on your machine; it goes only to the local QSIV service over a
+  private socket (directory mode 0700), and nothing is sent to any network.
 - **OpenAI Decisions review** sends that same script, language and dependency list to
   `https://api.openai.com/v1/decisions`, using the selected reviewer's dedicated key. No retention
   guarantee is implied by this integration.

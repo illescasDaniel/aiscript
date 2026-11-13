@@ -8,11 +8,21 @@ import stat
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Final, Literal
 from urllib.parse import urlparse
 
 from aiscript.errors import AskConfigError, ConfigError
 from aiscript.paths import config_path, is_windows, legacy_secrets_path
+
+
+@dataclass(frozen=True)
+class QSIVSettings:
+    """Optional ``providers.qsiv`` keys; None means the qsiv-runtime default."""
+
+    model_directory: str | None = None
+    python: str | None = None
+    runtime: Literal["fp8", "reference"] | None = None
 
 
 @dataclass(frozen=True)
@@ -25,6 +35,7 @@ class ProviderConfig:
     api: str = "chat"  # for kind "openai": "responses", "chat", or reviewer-only "decisions"
     reasoning_effort: str | None = None  # sent only when set
     temperature: float | None = None  # sent only when set (GPT-6 rejects it unless effort=none)
+    qsiv: QSIVSettings | None = None  # set only for the reviewer-only kind "qsiv" (api "qsiv")
 
 
 OFFICIAL_OPENAI_URL: Final = "https://api.openai.com/v1"
@@ -34,7 +45,9 @@ ACP_PROVIDERS: Final = frozenset(
     {"codex-acp", "claude-acp", "gemini-acp", "opencode-go-acp", "glm-acp"}
 )
 NATIVE_PROVIDERS: Final = frozenset({"anthropic", "gemini"})
-_BUILTIN_PROVIDERS: Final = ACP_PROVIDERS | NATIVE_PROVIDERS | {"openai"}
+QSIV_PROVIDER: Final = "qsiv"
+_QSIV_KEYS: Final = frozenset({"kind", "model_directory", "python", "runtime"})
+_BUILTIN_PROVIDERS: Final = ACP_PROVIDERS | NATIVE_PROVIDERS | {"openai", QSIV_PROVIDER}
 _NATIVE_URLS: Final = {
     # The adapters append only the resource path, so the API version belongs here; the
     # official-origin check compares the host only.
@@ -97,6 +110,7 @@ DECISIONS_DEFAULT_MODEL = "gpt-6-luna"
 JEV_DEFAULT_MODEL = "jev-latest"
 OLLAYA_DEFAULT_MODEL = "jevk5:4b"
 OLLAYA_DEFAULT_URL = "http://localhost:11435"
+# "qsiv" is not listed: like acp and the native kinds it returns from its own branch.
 _KINDS = {"openai", "jev", "ollaya"}
 _APIS = {"responses", "chat", "decisions"}
 _OPENAI_HOSTS = {"api.openai.com"}
@@ -214,11 +228,35 @@ def _selected_kind(name: str, providers: Mapping[str, Any], entry: Mapping[str, 
             return "acp"
         if name in NATIVE_PROVIDERS:
             return name
+        if name == QSIV_PROVIDER:
+            return QSIV_PROVIDER
     if name.lower() in _JEV_NAMES:
         return "jev"
     if name.lower() in _OLLAYA_NAMES:
         return "ollaya"
     return "openai"
+
+
+def _qsiv_settings(name: str, entry: Mapping[str, Any], path: Path) -> QSIVSettings:
+    """Unknown keys, non-string paths and a runtime other than fp8/reference are errors."""
+    for key in entry:
+        if key not in _QSIV_KEYS:
+            raise ConfigError(
+                f"Provider '{name}' in {path}: unknown QSIV key '{key}' "
+                f"(expected: {', '.join(sorted(_QSIV_KEYS - {'kind'}))})."
+            )
+    paths: dict[str, str | None] = {}
+    for key in ("model_directory", "python"):
+        value = entry.get(key)
+        if value is not None and not (isinstance(value, str) and value.strip()):
+            raise ConfigError(f"Provider '{name}' in {path}: {key} must be a path string.")
+        paths[key] = value.strip() if isinstance(value, str) else None
+    runtime = entry.get("runtime")
+    if runtime is None:
+        return QSIVSettings(paths["model_directory"], paths["python"])
+    if runtime == "fp8" or runtime == "reference":
+        return QSIVSettings(paths["model_directory"], paths["python"], runtime)
+    raise ConfigError(f"Provider '{name}' in {path}: runtime must be fp8 or reference.")
 
 
 def _resolve_provider(
@@ -253,6 +291,21 @@ def _resolve_provider(
             raise ConfigError(f"Provider '{name}': ACP settings belong to the agent configuration.")
         return ProviderConfig(
             name=name, api_key=None, base_url=None, model="", kind="acp", api="acp"
+        )
+    if kind == QSIV_PROVIDER:
+        if generator:
+            raise ConfigError(
+                f"Provider '{name}' in {path}: QSIV cannot generate scripts. "
+                "Select it with `reviewer_provider` and use another generator."
+            )
+        return ProviderConfig(
+            name=name,
+            api_key=None,
+            base_url=None,
+            model="",
+            kind=QSIV_PROVIDER,
+            api=QSIV_PROVIDER,
+            qsiv=_qsiv_settings(name, entry, path),
         )
     if kind in NATIVE_PROVIDERS:
         if not generator:
@@ -294,7 +347,7 @@ def _resolve_provider(
     if kind not in _KINDS:
         raise ConfigError(
             f"Provider '{name}' in {path} has unknown kind '{kind}' "
-            "(expected: openai, jev, ollaya)."
+            "(expected: openai, jev, ollaya, qsiv)."
         )
     if (_clean(entry.get("api")) or "").lower() == "decisions":
         if generator:

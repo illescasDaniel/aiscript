@@ -1,5 +1,13 @@
 # Technical decisions
 
+## 2026-11-13: QSIV limits and scrub rule (measured on a real GPU)
+
+Input limit is qsiv.constants.MAX_CONTEXT = 65,536 tokens over the rendered request; the service rejects over-limit input as too_large before inference (size check inside the inference lock: qsiv's tokenizer is not thread-safe). Service env scrub: names containing API_KEY, APIKEY, TOKEN, SECRET, PASSWORD, PASSWD, CREDENTIAL, PRIVATE_KEY, ACCESS_KEY, or a whole AUTH segment; caller PYTHONPATH not inherited. qsiv-runtime releases through release.yaml (PyPI trusted publisher, environment pypi).
+
+## 2026-11-13: QSIV lives in a shared package, `qsiv-runtime`
+
+Extracted from agemem into its own package (stdlib-only client, shared resident service, setup/doctor), used by aiscript as an optional extra and later by agemem. aiscript does not install the runtime. Release uses the pypi-publishing flow (trusted publishing). The service is started through a staged PYTHONPATH symlink and agemem's legacy model.lock until agemem migrates.
+
 ## 2026-11-12: AI inside scripts, build-time decisions D1-D5 and G5
 
 - D1: the shim goes on PYTHONPATH only for Python scripts that import `aiscript`. D2: `--ask` check order F6, config, F7, input, cap, send. D3: one counter dir of slot files per run (`AISCRIPT_ASK_COUNTER`). D4: the first-use answer of a named command is secret-scanned before it is saved. D5: `--list` shows `+ai`.

@@ -27,7 +27,7 @@ default_provider: openai
 #   max_response_kib: 1024
 
 # Decision model that reviews scripts on top of the built-in static scan.
-# Use `ollaya` for a local, keyless review; comment out to use only the static scan.
+# Use `ollaya` or `qsiv` for a local, keyless review; comment out to use only the static scan.
 reviewer_provider: jev
 
 providers:
@@ -65,6 +65,11 @@ providers:
   # ollaya:
   #   model: "jevk5:4b"
 
+  # QSIV: small local GPU model as reviewer (Linux x86_64, NVIDIA GPU, compute capability 8.9+).
+  # Install: uv tool install "aiscript[qsiv]", then run: uvx qsiv-runtime setup
+  # qsiv:
+  #   runtime: fp8   # fp8 | reference
+
   # Uses Ollama for a local LLM to create the scripts (set `default_provider: ollama`)
   # ollama:
   #   base_url: "http://localhost:11434/v1"
@@ -94,7 +99,7 @@ reviewers separately as described below.
 
 | Key | Meaning |
 |---|---|
-| `kind` | `openai`, `anthropic`, `gemini`, `jev` or `ollaya`. Built-in ACP selections use their agent without a provider definition. |
+| `kind` | `openai`, `anthropic`, `gemini`, `jev`, `ollaya` or `qsiv`. Built-in ACP selections use their agent without a provider definition. |
 | `api_key` | API key. Values ending in `...` (template placeholders) are ignored. |
 | `base_url` | Endpoint URL. `endpoint` is accepted as an alias. |
 | `model` | Model name. |
@@ -127,7 +132,41 @@ reviewers separately as described below.
   `http://localhost:11435` (or from `$OLLAYA_HOST`, as `host:port` or a URL) and `model`
   `jevk5:4b`. It also can only be the reviewer. Run `ollaya serve` first.
 
-Using a `jev` or `ollaya` provider as `default_provider` is a configuration error.
+- **qsiv**: a small decision model that runs on your own GPU through the optional `qsiv-runtime`
+  package; see [QSIV (local GPU reviewer)](#qsiv-local-gpu-reviewer). Reviewer only; it needs no
+  key and no `base_url`.
+
+Using a `jev`, `ollaya` or `qsiv` provider as `default_provider` is a configuration error.
+
+### QSIV (local GPU reviewer)
+
+QSIV answers the same four yes/no safety questions as Jev with a small model that runs on your
+machine: no API key and no network at review time. It is off by default.
+
+Requirements: Linux x86_64 and an NVIDIA GPU with compute capability 8.9 or higher (FP8; the
+`reference` runtime needs 8.0 or higher). The runtime is an optional extra, so the default install
+is unchanged:
+
+```sh
+uv tool install "aiscript[qsiv]"     # or: pip install "aiscript[qsiv]"
+uvx qsiv-runtime setup               # one-time download of the model and its GPU environment
+uvx qsiv-runtime doctor              # checks platform, GPU, model, runtime and socket directory
+```
+
+```yaml
+reviewer_provider: qsiv
+providers:          # the whole qsiv section is optional
+  qsiv:
+    runtime: fp8                                   # fp8 | reference
+    # model_directory: ~/.local/share/qsiv-runtime/model
+    # python: ~/.local/share/qsiv-runtime/venv/bin/python
+```
+
+Unknown keys, non-string paths and any other `runtime` are configuration errors. Explicit values
+here win over the `QSIV_RUNTIME_MODEL_DIRECTORY`, `QSIV_RUNTIME_PYTHON` and `QSIV_RUNTIME_RUNTIME`
+environment variables, which win over the package defaults. aiscript never installs the runtime;
+if the package or the model is missing the review fails closed with the command to run. See
+[safety](safety.md#qsiv-local-gpu) for the decision model and privacy.
 
 ### Installing ACP agents
 

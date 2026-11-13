@@ -16,6 +16,10 @@ dependencies = [
     "typesafe-sdk>=0.7.5",
 ]
 
+[project.optional-dependencies]
+# Local QSIV safety reviewer: Linux x86_64 and an NVIDIA GPU only, so it is not a default dependency.
+qsiv = ["qsiv-runtime>=0.1,<0.2"]
+
 [project.scripts]
 aiscript = "aiscript.cli:main"
 

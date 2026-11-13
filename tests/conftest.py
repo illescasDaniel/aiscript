@@ -21,6 +21,11 @@ def _isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "OLLAYA_API_KEY",
         "XDG_CONFIG_HOME",
         "AISCRIPT_ASK_COUNTER",
+        "QSIV_RUNTIME_MODEL_DIRECTORY",
+        "QSIV_RUNTIME_PYTHON",
+        "QSIV_RUNTIME_RUNTIME",
+        "QSIV_RUNTIME_SOCKET_DIRECTORY",
+        "QSIV_RUNTIME_IDLE_SECONDS",
     ):
         monkeypatch.delenv(var, raising=False)
 

@@ -13,6 +13,7 @@ from typing import Any
 
 from aiscript.config import ProviderConfig, is_local
 from aiscript.decisions import DecisionsCallError, DecisionsGateway, HazardQuestion, ReviewInput
+from aiscript.qsiv import QSIVCallError, QSIVGateway, RuntimeQSIVGateway
 
 
 @dataclass
@@ -83,6 +84,56 @@ def interpret_decisions_response(
         f"OpenAI Decisions review: {question.category} (p={probabilities[question.name]:.2f})"
         for question in questions
         if probabilities[question.name] >= 0.5
+    ]
+    return ReviewResult(bool(reasons), reasons)
+
+
+def assess_qsiv(
+    review_input: ReviewInput,
+    *,
+    questions: tuple[HazardQuestion, ...],
+    gateway: QSIVGateway,
+) -> ReviewResult:
+    """Assess input once with the local QSIV model; any failure is risky, with no payload."""
+    try:
+        answers = gateway.score(review_input=review_input, questions=questions)
+    except QSIVCallError as exc:
+        text = exc.message.rstrip()
+        if exc.hint:
+            text = f"{text.rstrip('.')}. {exc.hint}"
+        return ReviewResult(True, [f"Reviewer unavailable: {text}"])
+    except Exception:
+        return ReviewResult(True, ["Reviewer unavailable: QSIV review failed unexpectedly"])
+    return interpret_qsiv_answers(answers, questions=questions)
+
+
+def interpret_qsiv_answers(
+    answers: object, *, questions: tuple[HazardQuestion, ...]
+) -> ReviewResult:
+    """Re-check the whole answer before using any probability; flag p >= 0.5, unrounded."""
+    if (
+        not isinstance(answers, list)
+        or len(answers) != len(questions)
+        or any(
+            isinstance(p, bool)
+            or not isinstance(p, (int, float))
+            or not math.isfinite(p)
+            or not 0 <= p <= 1
+            for p in answers
+        )
+    ):
+        count = len(answers) if isinstance(answers, list) else 0
+        return ReviewResult(
+            True,
+            [
+                "Reviewer unavailable: QSIV returned an invalid answer "
+                f"(expected {len(questions)} probabilities in [0, 1], got {count})"
+            ],
+        )
+    reasons = [
+        f"QSIV review: {question.category} (p={probability:.2f})"
+        for question, probability in zip(questions, answers, strict=True)
+        if probability >= JEV_THRESHOLD
     ]
     return ReviewResult(bool(reasons), reasons)
 
@@ -1131,6 +1182,12 @@ def llm_review(
     script: str, language: str, p: ProviderConfig, dependencies: Sequence[str] = ()
 ) -> ReviewResult:
     """Ask the reviewer model; any failure fails closed (risky)."""
+    if p.kind == "qsiv":
+        return assess_qsiv(
+            ReviewInput(script, language, tuple(dependencies)),
+            questions=_HAZARD_QUESTIONS,
+            gateway=RuntimeQSIVGateway(p.qsiv),
+        )
     if p.api == "decisions":
         return assess_decisions(
             ReviewInput(script, language, tuple(dependencies)),

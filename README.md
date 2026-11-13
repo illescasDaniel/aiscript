@@ -139,7 +139,8 @@ the `ask` call talks to the model.
 ## Safety review / decision models
 
 Generated programs are checked before they are saved or run. Risky programs need approval; review
-failures and unavailable reviewers also require approval. Review is not a sandbox. See
+failures and unavailable reviewers also require approval. Review is not a sandbox. The reviewer can be a hosted or local decision model, including the
+optional local GPU model QSIV (`aiscript[qsiv]`). See
 [safety review](docs/safety.md) for the full behavior.
 
 ## Configuration
