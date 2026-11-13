@@ -252,3 +252,8 @@ def test_given_fresh_template_when_loaded_then_ai_settings_are_defaults(
     # then
     assert s.ai == AiSettings()
     assert "openai" in s.ai_target
+
+
+def test_config_template_is_ascii() -> None:
+    """The template is written and read with the platform encoding (cp1252 on Windows)."""
+    assert CONFIG_TEMPLATE.isascii()

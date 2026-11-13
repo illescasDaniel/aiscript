@@ -35,9 +35,9 @@ default_provider: openai
 
 # Optional ACP limits (uncomment to change; sizes in KiB).
 # acp:
-#   timeout_seconds: 100    # 1–600 seconds, total per request
-#   max_frame_kib: 1024     # 1–16384 KiB
-#   max_response_kib: 1024  # 1–16384 KiB
+#   timeout_seconds: 100    # 1-600 seconds, total per request
+#   max_frame_kib: 1024     # 1-16384 KiB
+#   max_response_kib: 1024  # 1-16384 KiB
 
 # Decision model that reviews scripts on top of the built-in static scan.
 # Use `ollaya` or `qsiv` for a local, keyless review; comment out to use only the static scan.
