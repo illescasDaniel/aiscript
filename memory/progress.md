@@ -91,3 +91,5 @@ None.
 ## SDD artifact organization
 
 - [x] Move design and specification documents into `sdd/design/` and `sdd/specs/` and update references (2026-11-13).
+
+- 2026-11-13: aiscript 1.5.0 released to PyPI (multi-provider + QSIV reviewer). Local tool replaced with the PyPI build; config uses claude-acp + qsiv. Next: migrate agemem to qsiv-runtime (not started).
