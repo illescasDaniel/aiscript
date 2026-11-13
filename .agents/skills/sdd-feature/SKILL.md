@@ -16,9 +16,9 @@ Read `AGENTS.md` / `CLAUDE.md` first. The project may override any of these defa
 | Setting | Default |
 |---------|---------|
 | Wireframes | `wireframes/<screen>.html` |
-| System designs | `design/<feature>/DESIGN.md` |
+| System designs | `sdd/design/<feature>/DESIGN.md` |
 | Diagrams | Mermaid code blocks inside the Markdown |
-| Specs | `specs/<feature>/SPEC.md` |
+| Specs | `sdd/specs/<feature>/SPEC.md` |
 | Domain types and interfaces (Phase 2) | the project's core layer, e.g. `domain/` + `ports/` in a hexagonal layout |
 | Quality gate (lint, types, tests) | the project's documented check command |
 | Test naming | `test_given_…_when_…_then_…` with `# given` / `# when` / `# then` comments (or the project's equivalent) |
@@ -54,7 +54,7 @@ Pick the track(s) from what the feature touches, and say which you picked (the u
 | Track | Deliverable | When |
 |-------|-------------|------|
 | UI | `wireframes/<screen>.html` | it adds or changes screens |
-| System | `design/<feature>/DESIGN.md` | it adds or changes APIs, data, jobs, events or services |
+| System | `sdd/design/<feature>/DESIGN.md` | it adds or changes APIs, data, jobs, events or services |
 
 A fullstack feature gets both, reviewed at **one** gate, because each side shapes the other. Neither (a library or a
 CLI)? Ask the user whether to skip Phase 0 or to sketch the interface instead (usage examples, output). Skipping is
@@ -85,7 +85,7 @@ IDEs. Use real names, fields and status codes, not boxes labelled "Service".
 
 Scripts run from the project root as `python3 <skill-dir>/scripts/<name>.py …`, where `<skill-dir>` is the folder
 containing this file (e.g. `.claude/skills/sdd-feature`). Then run
-`python3 <skill-dir>/scripts/design_preview.py design/<feature>/DESIGN.md --check`. `--check` validates every Mermaid
+`python3 <skill-dir>/scripts/design_preview.py sdd/design/<feature>/DESIGN.md --check`. `--check` validates every Mermaid
 block headlessly (needs Node and network): fix every `FAIL` before the gate. If it exits 2 it could not run; tell the
 user at the gate that the diagrams are unchecked instead of implying they are valid. The script also writes a
 review-only `preview.html` beside the design that renders the diagrams in a browser (pinned Mermaid and Markdown
@@ -115,7 +115,7 @@ allowed.
 
 If a decision adds or changes a failure path, update the design's diagrams to match.
 
-**Step 2 — Write `specs/<feature>/SPEC.md`** from [`templates/SPEC.md`](templates/SPEC.md) (next to this file):
+**Step 2 — Write `sdd/specs/<feature>/SPEC.md`** from [`templates/SPEC.md`](templates/SPEC.md) (next to this file):
 
 - `## Metadata`: feature summary, wireframe and/or design links, approval dates
 - `## Design decisions`: the five above, right after Metadata
@@ -127,10 +127,10 @@ If a decision adds or changes a failure path, update the design's diagrams to ma
   the scenario title, for example `### Scenario: export already running (F1)`.
 - `## Out of scope`
 
-Optionally run `python3 <skill-dir>/scripts/spec_check.py specs/<feature>/SPEC.md` to catch structural gaps,
+Optionally run `python3 <skill-dir>/scripts/spec_check.py sdd/specs/<feature>/SPEC.md` to catch structural gaps,
 including `F<n>` branches with no scenario.
 
-**Stop.** Ask: "Please review `specs/<feature>/SPEC.md` (including Design decisions) — approve so I can add the
+**Stop.** Ask: "Please review `sdd/specs/<feature>/SPEC.md` (including Design decisions) — approve so I can add the
 domain types and interfaces?" Record the approval dates in Metadata once given.
 
 ## Phase 2 — Architecture

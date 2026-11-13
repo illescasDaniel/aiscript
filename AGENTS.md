@@ -31,8 +31,8 @@ Every feature or user-facing change goes through these phases. Full workflow: th
 
 | Phase | Deliverable | Gate |
 |-------|-------------|------|
-| **0 — Design** | UI track: `wireframes/<screen>.html` (self-contained HTML/CSS). System track (APIs, data, jobs, events, services): `design/<feature>/DESIGN.md` with Mermaid diagrams, checked with `design_preview.py --check`. Fullstack: both | **Stop.** Ask for design approval (one gate for both tracks). |
-| **1 — Spec** | `specs/<feature>/SPEC.md`: agreed Design decisions (success criteria, failure handling, performance/resource budget, trust boundary, compatibility & rollout), a scenario for every `F<n>` failure branch of the design, BDD scenarios, Out of scope | **Stop.** Ask for spec approval. |
+| **0 — Design** | UI track: `wireframes/<screen>.html` (self-contained HTML/CSS). System track (APIs, data, jobs, events, services): `sdd/design/<feature>/DESIGN.md` with Mermaid diagrams, checked with `design_preview.py --check`. Fullstack: both | **Stop.** Ask for design approval (one gate for both tracks). |
+| **1 — Spec** | `sdd/specs/<feature>/SPEC.md`: agreed Design decisions (success criteria, failure handling, performance/resource budget, trust boundary, compatibility & rollout), a scenario for every `F<n>` failure branch of the design, BDD scenarios, Out of scope | **Stop.** Ask for spec approval. |
 | **2 — Architecture** | Domain types and interfaces only | **Stop.** Ask for approval before tests/adapters. |
 | **3 — Tests** | Unit tests from the BDD scenarios | Run them. |
 | **4 — Implementation** | Use cases, adapters, UI | Until tests pass; must match the approved wireframe and `DESIGN.md`. |
@@ -42,4 +42,4 @@ Every feature or user-facing change goes through these phases. Full workflow: th
   **not** design or spec approval; approval must be explicit, in chat. One gate per approval: after the wireframe, end
   the turn and wait.
 - If implementation reveals a spec flaw, rewrite the spec, get re-approval, then continue. Don't patch around a bad spec.
-- No production code before spec approval. Allowed before it: `wireframes/`, `design/`, `specs/` and docs.
+- No production code before spec approval. Allowed before it: `wireframes/`, `sdd/design/`, `sdd/specs/` and docs.

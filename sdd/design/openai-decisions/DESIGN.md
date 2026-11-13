@@ -1,7 +1,7 @@
 # OpenAI Decisions reviewer — system design
 
 - **Track:** System, reviewer API integration.
-- **Spec:** `specs/openai-decisions/SPEC.md`, to be written after design approval.
+- **Spec:** `sdd/specs/openai-decisions/SPEC.md`, to be written after design approval.
 - **Design approved:** 2026-10-22 (chat), incorporating the model, endpoint and credential decisions below.
 - **Date:** 2026-10-22.
 
@@ -207,7 +207,7 @@ Approved in chat on 2026-10-22:
 
 ## Open questions
 
-None. The five Phase 1 decisions, including credential fallback details, were approved in chat on 2026-10-22 in `specs/openai-decisions/DECISIONS.md`.
+None. The five Phase 1 decisions, including credential fallback details, were approved in chat on 2026-10-22 in `sdd/specs/openai-decisions/DECISIONS.md`.
 
 ## Official API references
 

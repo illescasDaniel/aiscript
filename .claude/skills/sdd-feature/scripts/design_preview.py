@@ -11,7 +11,7 @@ diagram with its heading, line number and the parser error. It still writes the 
 diagrams valid, 1 a diagram is invalid, 2 the check could not run (no ``npx``, network or Chromium problem): nothing
 was validated in that case.
 
-	python3 design_preview.py design/<feature>/DESIGN.md [--check] [-o <out.html>]
+	python3 design_preview.py sdd/design/<feature>/DESIGN.md [--check] [-o <out.html>]
 """
 
 from __future__ import annotations

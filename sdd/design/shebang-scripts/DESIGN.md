@@ -1,7 +1,7 @@
 # Executable prompt scripts — design
 
 - **Status:** Design approved in chat, 2026-11-09. Both Mermaid diagrams validated with the pinned Mermaid CLI.
-- **Spec:** `specs/shebang-scripts/SPEC.md`, after design approval.
+- **Spec:** `sdd/specs/shebang-scripts/SPEC.md`, after design approval.
 
 ## User interface
 

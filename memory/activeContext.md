@@ -19,3 +19,7 @@ None. Manual checks not done: M1 (strict schema on a non-OpenAI server), M3 (Win
 ## Next steps
 
 Run scenario tests before implementation, then implement and run quality gate, QA and independent grade. vLLM support is a separate future task. Publish 1.4.0 when separately authorized. Image generation is deferred to 1.5.0.
+
+## SDD artifact organization
+
+Design and specification documents now live under `sdd/design/` and `sdd/specs/`; existing feature work and next steps above continue unchanged.

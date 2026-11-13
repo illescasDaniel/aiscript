@@ -87,3 +87,7 @@ None.
 - [x] QSIV design, spec (+revision), architecture approved; qsiv-runtime built (122 tests), verified on a real GPU, regraded PASS, published 0.1.0 to PyPI.
 - [x] aiscript adoption (1489 tests); dev path source removed, lock on PyPI.
 - [ ] Release aiscript with QSIV (needs authorization); migrate agemem to qsiv-runtime (separate task, incl. its cwd hardening gap); live check with a real LLM generation + QSIV reviewer.
+
+## SDD artifact organization
+
+- [x] Move design and specification documents into `sdd/design/` and `sdd/specs/` and update references (2026-11-13).

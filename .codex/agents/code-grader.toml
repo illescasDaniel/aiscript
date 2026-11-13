@@ -12,7 +12,7 @@ that change state (only `git diff/log/show/status`, the spec checker, and read-o
 
 ## Inputs (given by the caller)
 
-- Spec path(s): `specs/<feature>/SPEC.md`
+- Spec path(s): `sdd/specs/<feature>/SPEC.md`
 - Diff base (default `main`)
 
 ## Procedure
@@ -26,7 +26,7 @@ that change state (only `git diff/log/show/status`, the spec checker, and read-o
 3. Read the spec fully (Metadata, Design decisions, Acceptance criteria, Out of scope), then
    `git diff <base>...HEAD` plus uncommitted changes (`git status`, `git diff`).
 4. Read what Metadata links: the wireframe if the diff touches production UI, and the system design
-   (`design/<feature>/DESIGN.md`) if it touches APIs, stored data, jobs, events or service wiring.
+   (`sdd/design/<feature>/DESIGN.md`) if it touches APIs, stored data, jobs, events or service wiring.
 5. Verify behaviour rather than guessing: follow definitions, callers and implementations (with code-navigation tools if
    the project has them, otherwise by reading the code). Use grep for free text.
 6. Score each criterion below. Every score needs `path:line` evidence; with no evidence you cannot score above PARTIAL.

@@ -9,7 +9,7 @@ scope exists. Whether the code satisfies the spec stays a judgement call for the
 
 Exit code 1 when any hard ``FAIL`` is found; ``WARN`` lines never change it.
 
-	python3 spec_check.py specs/<feature>/SPEC.md [more specs…] [--root <repo>]
+	python3 spec_check.py sdd/specs/<feature>/SPEC.md [more specs…] [--root <repo>]
 """
 
 from __future__ import annotations
@@ -81,9 +81,10 @@ def _design_decision_problems(section: str) -> tuple[list[str], list[str]]:
 	return problems, missing_optional
 
 
-def _linked(root: Path, metadata: str, pattern: str) -> tuple[list[str], list[str]]:
-	"""Repo-relative paths matching ``pattern`` in Metadata, and those that do not exist."""
-	paths = list(dict.fromkeys(re.findall(pattern, metadata)))
+def _linked(root: Path, spec: Path, metadata: str, pattern: str) -> tuple[list[str], list[str]]:
+	"""Resolve matching Metadata paths relative to the spec or repository root."""
+	matches = list(dict.fromkeys(re.findall(pattern, metadata)))
+	paths = [str((spec.parent / p).resolve()) if p.startswith("../") else p for p in matches]
 	return paths, [p for p in paths if not (root / p).is_file()]
 
 
@@ -116,10 +117,14 @@ def check_spec(root: Path, spec: Path, report: Report) -> None:
 	if metadata is None:
 		report.fail(f"{rel}: missing ## Metadata")
 	else:
-		wireframes, missing_wireframes = _linked(root, metadata, r"wireframes/[\w./#-]+?\.html")
-		designs, missing_designs = _linked(root, metadata, r"design/[\w./-]+?\.md")
+		wireframes, missing_wireframes = _linked(
+			root, spec, metadata, r"(?:\.\./)*wireframes/[\w./#-]+?\.html"
+		)
+		designs, missing_designs = _linked(
+			root, spec, metadata, r"(?:\.\./)*(?:sdd/)?design/[\w./-]+?\.md"
+		)
 		if not wireframes and not designs:
-			report.warn(f"{rel}: Metadata links no wireframes/*.html or design/*/DESIGN.md")
+			report.warn(f"{rel}: Metadata links no wireframes/*.html or sdd/design/*/DESIGN.md")
 		for kind, linked, missing in (("wireframe", wireframes, missing_wireframes), ("design", designs, missing_designs)):
 			if missing:
 				report.fail(f"{rel}: linked {kind}(s) not found: {', '.join(missing)}")

@@ -3,8 +3,8 @@
 ## Metadata
 
 - **Feature:** <one or two sentences: what the user gets>
-- **Wireframe:** [wireframes/<screen>.html](../../wireframes/<screen>.html). **Wireframe approved** <YYYY-MM-DD> (chat) (UI track; remove if none)
-- **System design:** [design/<feature>/DESIGN.md](../../design/<feature>/DESIGN.md). **Design approved** <YYYY-MM-DD> (chat) (system track; remove if none)
+- **Wireframe:** [wireframes/<screen>.html](../../../wireframes/<screen>.html). **Wireframe approved** <YYYY-MM-DD> (chat) (UI track; remove if none)
+- **System design:** [sdd/design/<feature>/DESIGN.md](../../design/<feature>/DESIGN.md). **Design approved** <YYYY-MM-DD> (chat) (system track; remove if none)
 - **Design decisions approved:** <YYYY-MM-DD> (chat)
 - **Spec approved:** <YYYY-MM-DD> (chat)
 - **Related:** <links to other specs this one depends on or changes>

@@ -1,7 +1,7 @@
 # <Feature name> — system design
 
 - **Wireframe:** [wireframes/<screen>.html](../../wireframes/<screen>.html) (fullstack only; remove otherwise)
-- **Spec:** `specs/<feature>/SPEC.md`, written after this design is approved
+- **Spec:** `sdd/specs/<feature>/SPEC.md`, written after this design is approved
 - **Design approved:** <YYYY-MM-DD> (chat)
 
 The diagrams below are an example (a CSV export moved to a background job): replace them with the feature's real

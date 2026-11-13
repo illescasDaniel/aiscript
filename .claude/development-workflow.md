@@ -13,7 +13,7 @@ A project's own `CLAUDE.md` / `AGENTS.md` overrides anything here (paths, qualit
 | Rules the agent must always follow | `CLAUDE.md` / `AGENTS.md` | the user (you propose) |
 | Current state: focus, gate status, blockers, next step | `memory/` — `memory-bank` skill | you only |
 | Dated facts that stay true: decisions + why, bug causes, gotchas, preferences | jevmem (`memory_write`) — `jev-memory` skill | you only |
-| What a feature does | `specs/<feature>/SPEC.md`, `wireframes/`, `design/<feature>/DESIGN.md` — `sdd-feature` skill | you, after user approval |
+| What a feature does | `sdd/specs/<feature>/SPEC.md`, `wireframes/`, `sdd/design/<feature>/DESIGN.md` — `sdd-feature` skill | you, after user approval |
 
 Never put current state in jevmem, or rules in either memory. A significant decision gets both a `memory/decisions.md`
 entry and a one-fact jevmem note. Use whichever of these the project has; if one is missing, skip it and don't create
@@ -53,7 +53,7 @@ approval") so a new session can resume.
 
 | Phase | Who | Notes |
 |---|---|---|
-| 0 Design | you; `architect` may draft the `DESIGN.md` content (flows, failure branches `F<n>`, data model, contracts) for a non-trivial system track | Pick the track: UI (`wireframes/`), system (`design/<feature>/DESIGN.md`) or both for fullstack, and say which. Needs back-and-forth with the user. Run `design_preview.py --check` on the design; unchecked diagrams are reported at the gate. **One gate** for both tracks. |
+| 0 Design | you; `architect` may draft the `DESIGN.md` content (flows, failure branches `F<n>`, data model, contracts) for a non-trivial system track | Pick the track: UI (`wireframes/`), system (`sdd/design/<feature>/DESIGN.md`) or both for fullstack, and say which. Needs back-and-forth with the user. Run `design_preview.py --check` on the design; unchecked diagrams are reported at the gate. **One gate** for both tracks. |
 | 1 Spec | `architect` proposes the five design decisions (success criteria, failure handling, performance budget, trust boundary, compatibility & rollout) and the scenarios (one per `F<n>` failure branch of the design), for anything non-trivial; you discuss them with the user, then write `SPEC.md` and run `spec_check.py` | **Gate.** |
 | 2 Architecture | `architect` designs domain types and interfaces, plus the Phase 3–4 plan (steps, which are parallel); a `coder` or you writes the interfaces | **Gate:** show the interfaces and a plan summary. |
 | 3 Tests | `coder`: one test per scenario; confirm they fail for the right reason | |

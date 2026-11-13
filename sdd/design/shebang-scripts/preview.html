@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Executable prompt scripts — design</title>
+<style>
+	:root {
+		--bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa;
+		--note-bg: #fff8c5; --note-line: #d4a72c; --err-bg: #ffebe9; --err-line: #cf222e;
+	}
+	@media (prefers-color-scheme: dark) {
+		:root {
+			--bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23;
+			--note-bg: #2e2a1a; --note-line: #9e6a03; --err-bg: #2d1416; --err-line: #f85149;
+		}
+	}
+	body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, sans-serif; }
+	main { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+	.note { border: 1px solid var(--note-line); background: var(--note-bg); border-radius: 6px; padding: 8px 12px; }
+	.legend span { display: inline-block; margin-right: 12px; }
+	.legend i { display: inline-block; width: 12px; height: 12px; border: 1px solid; border-radius: 2px;
+		vertical-align: -1px; margin-right: 4px; }
+	h1, h2 { border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+	a { color: inherit; }
+	code { background: var(--code); border-radius: 4px; padding: 1px 4px; font-size: 0.9em; }
+	pre { background: var(--code); border-radius: 6px; padding: 12px; overflow-x: auto; }
+	pre code { background: none; padding: 0; }
+	pre.mermaid { background: none; text-align: center; }
+	pre.mermaid-error { background: var(--err-bg); border: 1px solid var(--err-line); white-space: pre-wrap; }
+	table { border-collapse: collapse; display: block; overflow-x: auto; }
+	th, td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+</style>
+</head>
+<body>
+<main>
+	<p class="note"><strong>Review only.</strong> Generated from <code>DESIGN.md</code>, which is the source of
+	truth. Components:
+	<span class="legend"><span><i style="background:#dcfce7;border-color:#15803d"></i>added</span><span><i
+	style="background:#fef9c3;border-color:#a16207"></i>changed</span><span><i
+	style="background:#fee2e2;border-color:#b91c1c;border-style:dashed"></i>removed</span></span></p>
+	<article id="doc"></article>
+</main>
+<script>const SOURCE = "# Executable prompt scripts \u2014 design\n\n- **Status:** Design approved in chat, 2026-11-09. Mermaid validation remains pending.\n- **Spec:** `sdd/specs/shebang-scripts/SPEC.md`, after design approval.\n\n## User interface\n\n```text\n#!/usr/bin/env aiscript\nList the largest folders inside the directory given as the first argument.\n```\n\nSave this as `biggest`, make it executable with `chmod +x biggest`, then run\n`./biggest ~/Downloads`. Also support `aiscript ./biggest ~/Downloads`.\nThe shebang requires `aiscript` on `PATH`; an absolute interpreter path is an alternative.\nNeither `$HOME` nor `~` is expanded by the operating system in the shebang.\n\n## Main flow\n\n```mermaid\nsequenceDiagram\n    actor U as User\n    participant OS as Operating system\n    participant CLI as aiscript CLI\n    participant Cache as Prompt file cache\n    participant Build as Existing generation and review\n    participant Run as Script runner\n    U->>OS: Execute prompt file with arguments\n    OS->>CLI: Invoke aiscript with file path and arguments\n    CLI->>CLI: Identify and read prompt file\n    alt F1: file missing, unreadable, invalid or empty\n        CLI-->>U: Report error and exit nonzero\n    else readable prompt\n        CLI->>Cache: Check path identity and prompt content\n        alt cache missing or prompt changed\n            CLI->>Build: Generate and review prompt\n            alt F2: generation, review or approval fails\n                Build-->>U: Report failure, do not run stale build\n            else approved\n                Build->>Cache: Save reviewed build\n            end\n        end\n        alt F3: cache cannot be read or written\n            CLI-->>U: Report error and exit nonzero\n        else reviewed build available\n            CLI->>Run: Run build with original arguments and streams\n            alt F4: generated program cannot start\n                Run-->>U: Report error and exit nonzero\n            else started\n                Run-->>U: Forward output and exit status\n            end\n        end\n    end\n```\n\n## Components\n\n```mermaid\nflowchart LR\n    classDef added fill:#dcfce7,stroke:#15803d,color:#14532d\n    classDef changed fill:#fef9c3,stroke:#a16207,color:#713f12\n    CLI[CLI dispatch]:::changed --> File[Prompt file reader]:::added\n    CLI --> Named[Existing named commands]\n    File --> Cache[File build cache]:::added\n    Cache --> Builder[Generator and safety review]:::changed\n    Cache --> Runner[Script runner]\n    Docs[Installation and usage documentation]:::changed --> CLI\n```\n\n## Proposed behavior and boundaries\n\n- An explicit path selects file mode, preserving ordinary named-command behavior. Define exact\n  recognition rules, including missing paths and leading-dash filenames, in the specification.\n- Read the file as text, omit a leading shebang from the prompt, and pass subsequent command-line\n  arguments without interpreting them. Prompt files without a shebang may be invoked explicitly.\n- Cache builds separately from named commands, keyed by a normalized source path and validated\n  against prompt content. A changed prompt must be regenerated and reviewed before execution.\n  Define symlink, moved-file and concurrency behavior in the specification.\n- Reuse existing static and configured model review, including rejection of risky builds when\n  approval cannot be obtained. Report diagnostics on stderr and return the program's exit code.\n- Do not modify shell profiles during package installation. The Python console entry point already\n  creates `aiscript`; the installer chooses its location. Document checking `command -v aiscript`,\n  making the installer-managed bin directory available on `PATH`, and restarting the shell if needed.\n  Installer-specific guidance should be verified before writing it. Post-install messages are not\n  assumed to be available across pip, pipx and uv.\n- Shebang execution is a Unix-like operating system feature. Direct file invocation can be\n  specified separately for Windows, without claiming that Windows supports Unix shebang execution.\n\n## Questions for specification\n\n- Exact file-mode syntax and behavior for ambiguous bare names.\n- Cache identity, cleanup, concurrent builds, and whether changing only the shebang rebuilds.\n- File encoding, size limits, error messages and failure exit statuses.\n- Interaction of first-build approvals with redirected stdin and pipelines.\n";</script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+(async function () {
+	const doc = document.getElementById("doc");
+	if (typeof marked === "undefined" || typeof mermaid === "undefined") {
+		doc.innerHTML = '<p class="note">Could not load the renderers (offline?). Showing the raw Markdown.</p>';
+		const pre = document.createElement("pre");
+		pre.textContent = SOURCE;
+		doc.appendChild(pre);
+		return;
+	}
+	const renderer = new marked.Renderer();
+	const plainCode = renderer.code.bind(renderer);
+	renderer.code = function (code, lang) {
+		const token = typeof code === "object" ? code : { text: code, lang: lang };
+		if ((token.lang || "").trim() !== "mermaid") return plainCode.apply(null, arguments);
+		const pre = document.createElement("pre");
+		pre.className = "mermaid";
+		pre.textContent = token.text;
+		return pre.outerHTML;
+	};
+	doc.innerHTML = marked.parse(SOURCE, { renderer: renderer });
+
+	const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+	mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default" });
+	const valid = [];
+	for (const pre of doc.querySelectorAll("pre.mermaid")) {
+		try {
+			await mermaid.parse(pre.textContent);
+			valid.push(pre);
+		} catch (error) {
+			pre.className = "mermaid-error";
+			pre.textContent = "Mermaid syntax error:\n" + (error && error.message ? error.message : error)
+				+ "\n\n" + pre.textContent;
+		}
+	}
+	if (valid.length) await mermaid.run({ nodes: valid });
+	document.body.dataset.rendered = String(valid.length);
+})();
+</script>
+</body>
+</html>

@@ -2,7 +2,7 @@
 
 - **Track:** System (CLI and library).
 - **Status:** Revised design, including Q7 A, the shared-package proposal, first-run provider selection and Q8–Q10 recommendations, approved 2026-11-12 (user: “agree to the open questions recomendations. design approved.”).
-- **Review page:** [Design tab](../../sdd/multi-provider.html#p-design), which owns the review, open questions and approvals. This file owns the canonical Mermaid system flow.
+- **Review page:** [Design tab](../../multi-provider.html#p-design), which owns the review, open questions and approvals. This file owns the canonical Mermaid system flow.
 - **Date:** 2026-11-12.
 
 ## Outcome and boundaries

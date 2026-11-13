@@ -3,7 +3,7 @@
 ## Metadata
 
 - **Status:** Approved 2026-11-12; user said “spec approved”.
-- **Approved system design:** [DESIGN.md](../../design/multi-provider/DESIGN.md) and [visual review](../../sdd/multi-provider.html), approved in chat on 2026-11-12. The Spec tab is the review interface; this file is the project-required Markdown contract. Any discrepancy must be reconciled before approval.
+- **Approved system design:** [DESIGN.md](../../design/multi-provider/DESIGN.md) and [visual review](../../multi-provider.html), approved in chat on 2026-11-12. The Spec tab is the review interface; this file is the project-required Markdown contract. Any discrepancy must be reconciled before approval.
 - **Scope:** Native Anthropic and Gemini APIs, and five individually qualified ACP selections for script generation and `aiscript.ask` / `aiscript --ask`.
 
 ## Design decisions
