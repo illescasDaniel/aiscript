@@ -441,8 +441,9 @@ def _ai_reason(n: int, code: str, target: str) -> str:
     )
 
 
-# A plain echo/printf of text (no redirect, pipe, chaining or substitution) runs nothing.
-_INERT_BASH = re.compile(r"^(?:echo|printf)\s(?!.*\$\()[^|;&`<>]*$")
+# A plain echo/printf of text (no pipe, chaining, substitution or file redirect) runs nothing;
+# a trailing fd redirect such as ``>&2`` only moves the text to stderr.
+_INERT_BASH = re.compile(r"^(?:echo|printf)\s(?!.*\$\()[^|;&`<>]*(?:\s[0-9]?>&[12])?\s*$")
 
 
 def printable(text: str) -> str:
@@ -579,6 +580,7 @@ class _PyScan(ast.NodeVisitor):
     def __init__(self, tree: ast.Module, lines: list[str]) -> None:
         self.lines = lines
         self.found: dict[tuple[str, int], None] = {}
+        self.ai_imports: set[int] = set()  # lines where AI use is only the import (a backstop)
         self.loop = 0
         self.downloads = False
         self.dynamic_execs: list[ast.AST] = []
@@ -716,6 +718,7 @@ class _PyScan(ast.NodeVisitor):
                 self.add(REMOTE_EXEC, node)  # native code is invisible to this scan
             if root == "aiscript":
                 self.add(AI_USE, node)  # the shim is reachable by any alias, partial or getattr
+                self.ai_imports.add(getattr(node, "lineno", 1))
             if any(name == m or name.startswith(m + ".") for m in _PY_DOWNLOAD):
                 self.downloads = True
 
@@ -944,11 +947,14 @@ def _python_review(script: str, ai_target: str = "the configured provider") -> R
     if scan.downloads:  # fetched data that then gets executed
         for node in scan.dynamic_execs:
             scan.add(REMOTE_EXEC, node)
+    # The import is only a backstop for aliased calls; once a call is reported, hide the import.
+    calls = {n for category, n in scan.found if category == AI_USE and n not in scan.ai_imports}
     reasons = [
         _ai_reason(n, scan.src_line(n), ai_target)
         if category == AI_USE
         else f"{category} (line {n}): {_short(printable(scan.src_line(n)))}"
         for category, n in sorted(scan.found, key=lambda k: (k[1], _PY_ORDER[k[0]]))
+        if not (category == AI_USE and calls and n in scan.ai_imports and n not in calls)
     ]
     return ReviewResult(bool(reasons), reasons)
 
@@ -1200,6 +1206,24 @@ def review(
 # --------------------------------------------------------------------------- #
 
 
+_AI_REASON = re.compile(
+    rf"^{re.escape(AI_USE)} \(line (\d+)\): (.*) \(sends its input to (.*) on every run\)$", re.S
+)
+
+
+def _ai_notice_lines(reasons: Sequence[str]) -> tuple[str, list[str]] | None:
+    """Target and ``line N: code`` items when every finding is plain AI use, else ``None``."""
+    items: list[str] = []
+    target = ""
+    for reason in reasons:
+        match = _AI_REASON.match(reason)
+        if match is None:
+            return None
+        target = target or match.group(3)
+        items.append(f"line {match.group(1)}: {printable(match.group(2))}")
+    return (target, items) if items else None
+
+
 def confirm(
     script: str,
     result: ReviewResult,
@@ -1218,15 +1242,33 @@ def confirm(
     def err(msg: str = "") -> None:
         print(msg, file=sys.stderr)
 
+    ai_only = _ai_notice_lines(result.reasons)
     err()
-    err("!" * 60)
-    err("WARNING: this generated script may be risky:")
-    for reason in result.reasons:
-        err(f"  - {printable(reason)}")
-    err("!" * 60)
+    if ai_only is not None:
+        target, items = ai_only
+        err("NOTE: this script sends data to your AI provider.")
+        err(f"Each time it runs, the data it collects is sent to {target}:")
+        for item in items:
+            err(f"  - {item}")
+        err(
+            "Nothing is sent unless the script runs. "
+            f"Check the line{'s' if len(items) > 1 else ''} above to see what data goes out."
+        )
+    else:
+        err("!" * 60)
+        err("WARNING: this generated script may be risky:")
+        for reason in result.reasons:
+            err(f"  - {printable(reason)}")
+        err("!" * 60)
 
     if not stdin_isatty:
-        err("aiscript: refusing to run a risky script in non-interactive mode.")
+        if ai_only is not None:
+            err(
+                "aiscript: approval is needed but cannot be asked in non-interactive mode; "
+                "run it once in a terminal."
+            )
+        else:
+            err("aiscript: refusing to run a risky script in non-interactive mode.")
         return False
 
     lines = script.splitlines()

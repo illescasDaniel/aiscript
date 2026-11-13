@@ -8,14 +8,17 @@ from collections.abc import Mapping
 from typing import IO
 
 from aiscript import ask_counter, ask_openai
-from aiscript.ask import AskRequest, JsonSchema, decode_input, run_ask, validate_call
+from aiscript.ask import AskProvider, AskRequest, JsonSchema, decode_input, run_ask, validate_call
 from aiscript.config import (
     identify_ask_target,
+    load_acp_settings,
     load_ai_settings,
     load_raw_config,
     resolve_ask_key,
 )
 from aiscript.errors import AskConfigError, AskError, AskUsageError, ConfigError
+from aiscript.provider_factory import AskBridge, NoticeProvider, make_provider
+from aiscript.providers.contracts import CompletionError
 
 _MAX_MESSAGE = 600
 
@@ -45,13 +48,38 @@ def _ask(
     try:
         raw = load_raw_config()
         limits = load_ai_settings(raw)
+        acp = load_acp_settings(raw)
     except ConfigError as exc:
         raise AskConfigError(str(exc)) from None
     target = identify_ask_target(raw)  # F7
     key = resolve_ask_key(target, raw, environ)
     max_bytes = limits.max_input_kb * 1024
     data = decode_input(stdin.read(max_bytes), max_bytes)  # F8
-    provider = ask_openai.make_openai_provider(target, key, limits)
+    provider: AskProvider
+    if target.kind == "openai":
+        provider = NoticeProvider(
+            ask_openai.make_openai_provider(target, key, limits), limits.timeout_seconds
+        )
+    else:
+        try:
+            neutral = make_provider(
+                target.kind,
+                target.provider,
+                target.model,
+                target.base_url,
+                key,
+                limits.timeout_seconds,
+                acp,
+            )
+        except CompletionError:
+            raise AskConfigError(
+                f"Provider '{target.provider}' is not yet available; check its connector setup."
+            ) from None
+        provider = AskBridge(
+            neutral,
+            is_acp=target.kind == "acp",
+            timeout=acp.timeout_seconds if target.kind == "acp" else limits.timeout_seconds,
+        )
     result = run_ask(  # F13, then send (F9-F12)
         AskRequest(task, data, data_description, schema),
         limits=limits,

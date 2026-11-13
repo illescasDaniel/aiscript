@@ -32,8 +32,14 @@ See [installation and PATH setup](docs/installation.md) for troubleshooting.
 
 ## Quickstart
 
-Run `aiscript --init`, then configure your generator and optional reviewer in
-`~/.config/aiscript/config.yaml` or through environment variables. See the
+Run `aiscript --init` to choose a provider and create a starter configuration at
+`~/.config/aiscript/config.yaml`. On an interactive first run that needs script generation,
+aiscript also offers this choice if there is no configuration yet. The menu checks for local
+executables and environment keys; a detected item is not necessarily signed in or ready to use.
+You can select an undetected provider and finish its setup afterwards.
+
+Existing configuration and unattended runs do not show the menu. Non-interactive `--init`
+creates the OpenAI starter configuration. See [configuration](#configuration) and the
 [configuration reference](docs/configuration.md) for provider setup and API keys.
 
 You can create a named command interactively:
@@ -68,9 +74,11 @@ arguments, caching and rebuilding.
 ## AI inside scripts
 
 Generated scripts can ask your configured model to summarise, classify or extract data through
-`aiscript.ask` (Python) or `aiscript --ask` (shell), without ever seeing your API key. Their input
-is sent to the provider on every run. See [usage](docs/usage.md#ai-inside-scripts) and
-[privacy](docs/safety.md#privacy).
+`aiscript.ask` (Python) or `aiscript --ask` (shell). Their input is sent to the selected provider
+on every run. A status line on stderr reports the configured timeout when a request starts; the
+answer remains on stdout or is returned to the Python caller. API timeouts apply per attempt, so
+retries can take longer. ACP timeouts are total request deadlines. See
+[usage](docs/usage.md#ai-inside-scripts) and [privacy](docs/safety.md#privacy).
 
 For example, save this as `standup`. Git can list commits but can't summarise them, so the prompt
 asks for that step explicitly:
@@ -136,13 +144,39 @@ failures and unavailable reviewers also require approval. Review is not a sandbo
 
 ## Configuration
 
-Run `aiscript --init` to create a starter config. Choose the generation and review providers and
-configure their credentials as described in the [configuration reference](docs/configuration.md).
+Set `default_provider` in `config.yaml` to choose the provider that writes your scripts and
+answers AI calls inside them. The starter config (`aiscript --init`) has an entry for each choice.
+
+- **APIs:** `openai` (or any OpenAI-compatible endpoint), `anthropic` and `gemini`. Put the API key
+  and model in the config.
+- **Installed agents (ACP):** `codex-acp`, `claude-acp`, `gemini-acp`, `opencode-go-acp` and
+  `glm-acp` use the agent you already have installed and signed in to, with no `providers:` entry.
+  The agent chooses its model. OpenCode Go needs `"model": "opencode-go/<model>"` in your OpenCode
+  config. Agents are trusted local programs, not a sandbox. Install and sign in to the agent
+  first: see [installing ACP agents](docs/configuration.md#installing-acp-agents).
+
+```yaml
+default_provider: claude-acp
+```
+
+See the [configuration reference](docs/configuration.md) for API keys, ACP limits, the optional
+safety reviewer and environment variables, and [safety](docs/safety.md#acp-agents) for agent trust.
 
 ## Usage
 
 Run `aiscript --help` for available commands. See [usage and storage](docs/usage.md) for command
 management, Python dependencies and cache locations.
+
+## Development
+
+```sh
+uv sync                      # install dependencies
+uv run task test             # tests
+uv run task dev --init       # try your checkout with a private, gitignored config in .dev/
+```
+
+Edit `.dev/config.yaml` to add an API key, then run any command with `uv run task dev` (for
+example `uv run task dev sizes ~/Downloads`). See [development](docs/development.md).
 
 ## Docs
 

@@ -124,8 +124,10 @@ A provider of kind `openai` using `responses` or `chat` can also be the reviewer
   raw, joined, reversed, ROT13, base64/hex/percent-decoded, folded Python string and shell-escape
   forms. Out-of-order fragments under 12 characters and computed transforms cannot be caught.
   `aiscript --check-secrets` runs the scan over existing builds.
-- **AI-use confirmation**: a script that calls the model is always risky and needs an interactive
-  yes naming the provider and model; non-interactive builds are refused.
+- **AI-use confirmation**: a script that calls the model needs an interactive yes. When AI use is
+  the only finding, aiscript shows a short note ("this script sends data to your AI provider"),
+  naming the provider and the lines that send data, instead of a risk warning; any other finding
+  keeps the full warning. Non-interactive builds are refused either way.
 - **Credential access** (reading `*_API_KEY`/`*_TOKEN`, setting `OPENAI_BASE_URL` or `AISCRIPT_*`,
   opening the aiscript config, calling an LLM host directly) is reported and can be overridden
   interactively. Running `aiscript NAME`, `aiscript ./file` or `--rebuild` from a script is
@@ -135,6 +137,24 @@ A provider of kind `openai` using `responses` or `chat` can also be the reviewer
   and could read `config.yaml` itself; aiscript is not a sandbox.
 - Model output is untrusted. Rolling back: rebuild or remove AI scripts before downgrading
   (1.3.0 exits 2 on `--ask`).
+
+## ACP agents
+
+Built-in ACP selections (`codex-acp`, `claude-acp`, `gemini-acp`, `opencode-go-acp`, `glm-acp`) run
+a local agent executable that you installed and signed in to.
+
+- **Trusted local executable**: the agent runs with your own operating-system privileges,
+  environment and its own configuration, hooks, network access and tools. aiscript only speaks the
+  protocol to it; it does not install, update or sandbox it.
+- **Your current directory**: the agent starts in the directory where you ran aiscript, not in an
+  empty one.
+- **Permission denial is not a sandbox**: aiscript refuses the agent's permission, file and terminal
+  requests, but the agent can still act on its own and already completed actions persist.
+- **Limits, not guarantees**: the deadline and size limits (`acp.*`) stop a request; they do not
+  cap model tokens, charges or what the agent does internally. Instructions are sent as prompt text
+  (no system role) and JSON output is validated locally, not by the provider.
+- The agent's stderr is never shown or logged by aiscript. Requests may be billed by the agent's
+  own provider.
 
 ## Fail closed
 

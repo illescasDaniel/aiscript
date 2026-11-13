@@ -9,9 +9,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import TextIO
 
 from aiscript import __version__, ask_cli, builder, paths, prompt_file, sweep
-from aiscript.config import load_settings
+from aiscript.config import Settings, load_settings
 from aiscript.errors import AiscriptError
 from aiscript.init_cmd import run_init
 from aiscript.listing import list_commands
@@ -49,6 +50,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-description")
     parser.add_argument("--schema")
     return parser
+
+
+def _generation_settings() -> Settings:
+    """Set up an interactive first-time provider before loading build settings."""
+    from aiscript.init_cmd import CONFIG_TEMPLATE
+    from aiscript.onboarding import setup_if_needed
+
+    if not setup_if_needed(CONFIG_TEMPLATE):
+        raise AiscriptError("Provider setup cancelled; nothing generated.")
+    return load_settings()
 
 
 def _err(msg: str) -> None:
@@ -95,7 +106,7 @@ def _rebuild(name: str) -> int:
         raise AiscriptError(f"No prompt for {name!r}. Run `aiscript {name}` to create it.")
     # build() replaces the cached script atomically, so a failed or rejected
     # rebuild keeps the previous version.
-    print(builder.build(name, load_settings()))
+    print(builder.build(name, _generation_settings()))
     return 0
 
 
@@ -116,6 +127,44 @@ def _remove(name: str) -> int:
     return 0
 
 
+_PASTE_START = "\x1b[200~"
+_PASTE_END = "\x1b[201~"
+
+
+def _read_description(stream: TextIO) -> str:
+    """Read the command description; on a terminal a multi-line paste is one answer."""
+    if os.name == "posix" and stream.isatty() and sys.stderr.isatty():
+        sys.stderr.write("\x1b[?2004h")  # ask the terminal to mark pasted text
+        sys.stderr.flush()
+        try:
+            return _read_paste_aware(stream)
+        finally:
+            sys.stderr.write("\x1b[?2004l")
+            sys.stderr.flush()
+    try:
+        return input("").strip()
+    except EOFError:
+        return ""
+
+
+def _read_paste_aware(stream: TextIO) -> str:
+    """Read lines until Enter; bracketed-paste newlines do not count, so paste then Enter."""
+    lines: list[str] = []
+    pasting = False
+    while True:
+        raw = stream.readline()
+        if not raw:
+            break
+        if _PASTE_START in raw:
+            pasting = True
+        if _PASTE_END in raw:
+            pasting = False
+        lines.append(raw.replace(_PASTE_START, "").replace(_PASTE_END, ""))
+        if raw.endswith("\n") and not pasting:
+            break
+    return "\n".join(line.strip() for line in lines).strip()
+
+
 def _run_command(name: str, args: list[str]) -> int:
     paths.validate_command_name(name)
     paths.ensure_dirs()
@@ -123,17 +172,14 @@ def _run_command(name: str, args: list[str]) -> int:
     if not ppath.exists():
         sys.stderr.write(f"Command not found. What should '{name}' do? ")
         sys.stderr.flush()
-        try:
-            answer = input("").strip()
-        except EOFError:
-            answer = ""
+        answer = _read_description(sys.stdin)
         if not answer:
             _err("")
             raise AiscriptError("No description given; nothing saved.")
-        builder.check_prompt(answer, load_settings())
+        builder.check_prompt(answer, _generation_settings())
         ppath.write_text(answer + "\n", encoding="utf-8")
     if builder.needs_build(name):
-        builder.build(name, load_settings())
+        builder.build(name, _generation_settings())
     return run_script(paths.function_path(name), args)
 
 
@@ -144,7 +190,7 @@ def _dispatch(argv: list[str]) -> int:
     if argv[0].startswith("-"):
         pass  # an option value may contain a path separator; never treat it as a file
     elif os.sep in argv[0] or (os.altsep is not None and os.altsep in argv[0]):
-        return prompt_file.execute(Path(argv[0]), argv[1:], load_settings)
+        return prompt_file.execute(Path(argv[0]), argv[1:], _generation_settings)
     if argv[0].startswith("-"):
         try:
             ns = _build_parser().parse_args(argv)

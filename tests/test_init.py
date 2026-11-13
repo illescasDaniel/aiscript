@@ -55,7 +55,7 @@ def test_template_is_valid_yaml_and_commented() -> None:
     data = yaml.safe_load(CONFIG_TEMPLATE)
     assert data["default_provider"] == "openai"
     assert data["reviewer_provider"] == "jev"
-    assert set(data["providers"]) == {"openai", "jev"}
+    assert set(data["providers"]) == {"openai", "anthropic", "gemini", "jev"}
     assert "chmod 600" in CONFIG_TEMPLATE
     assert "# ollama:" in CONFIG_TEMPLATE
 
@@ -148,7 +148,14 @@ def _uncommented_template() -> str:
 
 def test_template_local_blocks_resolve_when_uncommented(monkeypatch: pytest.MonkeyPatch) -> None:
     text = _uncommented_template()
-    assert set(yaml.safe_load(text)["providers"]) == {"openai", "jev", "ollaya", "ollama"}
+    assert set(yaml.safe_load(text)["providers"]) == {
+        "openai",
+        "anthropic",
+        "gemini",
+        "jev",
+        "ollaya",
+        "ollama",
+    }
     aiscript_home().mkdir(parents=True)
 
     config_path().write_text(text.replace("default_provider: openai", "default_provider: ollama"))
@@ -198,7 +205,7 @@ def test_given_starter_config_when_decisions_example_is_uncommented_then_opt_in_
 
     # then
     assert active["reviewer_provider"] == "jev"
-    assert set(active["providers"]) == {"openai", "jev"}
+    assert set(active["providers"]) == {"openai", "anthropic", "gemini", "jev"}
     assert data is not None
     entry = data["providers"]["openai_decisions"]
     assert entry["kind"] == "openai"

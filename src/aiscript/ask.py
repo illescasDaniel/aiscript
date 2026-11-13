@@ -88,10 +88,13 @@ class ProviderReply:
 class ProviderCallError(Exception):
     """Bounded provider failure without a payload."""
 
-    def __init__(self, kind: ProviderFailure, status_code: int | None = None) -> None:
+    def __init__(
+        self, kind: ProviderFailure, status_code: int | None = None, detail: str | None = None
+    ) -> None:
         super().__init__(kind)
         self.kind: ProviderFailure = kind
         self.status_code: int | None = status_code
+        self.detail: str | None = detail
 
 
 class AskProvider(Protocol):
@@ -183,7 +186,7 @@ def provider_error(exc: ProviderCallError, *, where: str, schema_sent: bool) -> 
         "server": "the server reported an error",
         "bad_request": "the request was rejected",
     }
-    reason = reasons.get(exc.kind, "an unexpected error occurred")
+    reason = exc.detail or reasons.get(exc.kind, "an unexpected error occurred")
     message = f"The call to {where} failed: {reason}."
     if exc.kind == "bad_request" and schema_sent:
         message += " The server may not support strict JSON schemas; simplify or remove the schema."

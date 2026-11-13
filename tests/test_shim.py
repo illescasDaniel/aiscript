@@ -5,6 +5,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -29,7 +30,7 @@ def shim() -> ModuleType:
 
 
 class Spawns:
-    """Replaces subprocess.run: records calls and answers with a scripted result."""
+    """Replaces the child boundary: records calls and returns a scripted result."""
 
     def __init__(self, returncode: int = 0, stdout: bytes = b"", stderr: bytes = b"") -> None:
         self.calls: list[tuple[list[str], dict[str, Any]]] = []
@@ -37,8 +38,10 @@ class Spawns:
         self.stdout = stdout
         self.stderr = stderr
 
-    def __call__(self, args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        self.calls.append((list(args), kwargs))
+    def __call__(
+        self, args: list[str], data: bytes, env: dict[str, str]
+    ) -> subprocess.CompletedProcess[bytes]:
+        self.calls.append((list(args), {"input": data, "env": env}))
         return subprocess.CompletedProcess(args, self.returncode, self.stdout, self.stderr)
 
 
@@ -55,10 +58,12 @@ def on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def spawns(monkeypatch: pytest.MonkeyPatch, on_path: Path) -> Callable[..., Spawns]:
+def spawns(
+    monkeypatch: pytest.MonkeyPatch, on_path: Path, shim: ModuleType
+) -> Callable[..., Spawns]:
     def install(returncode: int = 0, stdout: bytes = b"", stderr: bytes = b"") -> Spawns:
         fake = Spawns(returncode, stdout, stderr)
-        monkeypatch.setattr(subprocess, "run", fake)
+        monkeypatch.setattr(shim, "_run_child", fake)
         return fake
 
     return install
@@ -70,7 +75,7 @@ def test_given_empty_path_when_asking_then_not_found_error_and_nothing_spawned(
     # given
     monkeypatch.setenv("PATH", "")
     fake = Spawns()
-    monkeypatch.setattr(subprocess, "run", fake)
+    monkeypatch.setattr(shim, "_run_child", fake)
     # when
     with pytest.raises(shim.AskNotFoundError) as info:
         shim.ask("task", "data", "desc")
@@ -226,3 +231,56 @@ def test_given_schema_json_then_it_round_trips(
     assert sent.startswith("--schema=")
     assert json.loads(sent[len("--schema=") :]) == schema
     assert " " not in sent
+
+
+class _TimedStderr:
+    """Records when each write reaches the shim's stderr."""
+
+    def __init__(self) -> None:
+        self.writes: list[tuple[float, str]] = []
+
+    def write(self, text: str) -> int:
+        self.writes.append((time.time(), text))
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+    @property
+    def text(self) -> str:
+        return "".join(text for _, text in self.writes)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executable script")
+def test_given_real_child_when_it_announces_then_notice_arrives_early_once_and_noise_is_dropped(
+    shim: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # given
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    finished = tmp_path / "finished"
+    notice = "aiscript: This request can take up to 120 seconds.\n"
+    exe = bin_dir / "aiscript"
+    exe.write_text(
+        f"#!{sys.executable}\n"
+        "import sys, time\n"
+        "sys.stdin.read()\n"
+        f"sys.stderr.write({notice!r}); sys.stderr.flush()\n"
+        "sys.stderr.write('CHILD-NOISE private detail\\n')\n"
+        f"sys.stderr.write({notice!r}); sys.stderr.flush()\n"
+        "time.sleep(1.0)\n"
+        f"open({str(finished)!r}, 'w').write(str(time.time()))\n"
+        "sys.stdout.write('answer\\n')\n"
+    )
+    exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    recorder = _TimedStderr()
+    monkeypatch.setattr(shim.sys, "stderr", recorder)
+    # when
+    answer = shim.ask("task", "data", "desc")
+    # then
+    done_at = float(finished.read_text())
+    assert answer == "answer"
+    assert recorder.text == notice
+    assert recorder.writes[0][0] < done_at - 0.5
+    assert "CHILD-NOISE" not in recorder.text

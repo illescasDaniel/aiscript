@@ -5,10 +5,22 @@ Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 ```sh
 uv sync                        # install the package and dev dependencies
 uv run aiscript --help         # run the CLI from the checkout
-uv run pytest -q               # tests
-uv run ruff check              # lint
-uv run ruff format --check     # formatting (line length 100)
+uv run task test               # tests
+uv run task lint               # ruff check, ruff format --check and mypy (line length 100)
 ```
+
+## Trying it with your own config
+
+`uv run task dev` runs the checkout with its config, prompts and generated scripts in a gitignored
+`.dev/` folder, so your real `~/.config/aiscript` is never touched:
+
+```sh
+uv run task dev --init       # creates .dev/config.yaml; edit it and add your API key
+uv run task dev --ask="reply with one word" --data-description="a word" <<< "hi"
+```
+
+Any other aiscript command works the same way (`uv run task dev sizes ~/Downloads`). Set
+`AISCRIPT_HOME` yourself to use another folder. To start over, delete `.dev/`.
 
 Tests make no external network calls: the LLM layer is monkeypatched, and the AI-call tests run
 against `tests/fake_openai.py`, a local fake OpenAI-compatible HTTP server.

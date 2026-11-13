@@ -1,5 +1,15 @@
 # Progress
 
+## Multi-provider and ACP support
+
+- [x] Initial Phase 0 design approved with ACP for generation and `--ask`.
+- [x] Resolve conflict between ACP capabilities and existing `--ask` guarantees; obtain revised design approval.
+- [x] Design and approve first-run provider selection and starter configuration examples.
+- [x] Draft and approve spec.
+- [x] Draft and approve architecture.
+- [ ] Scenario tests, implementation, QA and independent grade.
+- [ ] Future: investigate and add vLLM support (outside this feature).
+
 ## AI inside generated scripts (1.4.0)
 
 - [x] Architect proposal and user decisions agreed in chat (2026-11-12).
@@ -63,3 +73,9 @@
 ### Open
 
 None.
+
+## Multi-provider / ACP
+
+- [x] Architecture approved; tests and implementation built; gate green, 1403 tests (2026-11-13).
+- [x] QA (6 defects) and grade (NEEDS WORK); both fix rounds used (2026-11-13).
+- [ ] Decide G2 (connector qualification) and Q3/G6 (empty-answer exit code); update SPEC.md traceability; commit when authorized.

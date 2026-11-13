@@ -33,6 +33,12 @@ default_provider: openai
 #   timeout_seconds: 60
 #   max_output_tokens: 4000
 
+# Optional ACP limits (uncomment to change; sizes in KiB).
+# acp:
+#   timeout_seconds: 100    # 1–600 seconds, total per request
+#   max_frame_kib: 1024     # 1–16384 KiB
+#   max_response_kib: 1024  # 1–16384 KiB
+
 # Decision model that reviews scripts on top of the built-in static scan.
 # Use `ollaya` for a local, keyless review; comment out to use only the static scan.
 reviewer_provider: jev
@@ -43,6 +49,28 @@ providers:
     api_key: "..."
     model: "gpt-6-luna"
     # reasoning_effort: low    # none | low | medium | high | xhigh | max (model-dependent)
+
+  # Anthropic (Claude API). API key: https://console.anthropic.com/settings/keys
+  # Set default_provider: anthropic to use it. Alternative to api_key: ANTHROPIC_API_KEY.
+  anthropic:
+    api_key: "..."
+    model: "claude-sonnet-5-5"
+
+  # Google Gemini API. API key: https://aistudio.google.com/apikey
+  # Set default_provider: gemini to use it.
+  # Alternative to api_key: GEMINI_API_KEY or GOOGLE_API_KEY.
+  gemini:
+    api_key: "..."
+    model: "gemini-3-pro"
+
+  # Installed ACP agents: set default_provider to one of these names; no entry needed.
+  # Model and login are controlled by the respective agent.
+  # opencode-go-acp needs "model": "opencode-go/<model>" in your OpenCode config.
+  # codex-acp:
+  # claude-acp:
+  # gemini-acp:
+  # opencode-go-acp:
+  # glm-acp:
 
   # OpenAI Decisions API reviewer provider.
   # openai_decisions:
@@ -94,6 +122,12 @@ def run_init() -> int:
     say(f"  prompts:   {prompts_dir()}")
     say(f"  functions: {functions_dir()}")
 
+    from aiscript.onboarding import setup_if_needed
+
+    already_existed = config_path().exists()
+    if not setup_if_needed(CONFIG_TEMPLATE):
+        return 1
+    created_interactively = not already_existed and config_path().exists()
     path = config_path()
     legacy = legacy_secrets_path()
     if not path.exists() and legacy.is_file():
@@ -105,7 +139,8 @@ def run_init() -> int:
         try:
             fd = os.open(path, flags, 0o600)
         except FileExistsError:
-            say(f"Config file already exists (left untouched): {path}")
+            if not created_interactively:
+                say(f"Config file already exists (left untouched): {path}")
         else:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(CONFIG_TEMPLATE)
@@ -118,8 +153,8 @@ def run_init() -> int:
 
     say("")
     say("Next steps:")
-    say(f"  1. Put your OpenAI and Jev API keys in {path}")
-    say("     (or export OPENAI_API_KEY and TYPESAFE_API_KEY).")
+    say(f"  1. Configure your selected provider and reviewer credentials in {path}")
+    say("     (or use the documented API-key environment variables).")
     say("     For a local, keyless review, use the `ollaya` provider (https://ollaya.dev).")
     say("  2. Create your first command:  aiscript <name>")
     return 0

@@ -30,6 +30,23 @@ class ProviderConfig:
 OFFICIAL_OPENAI_URL: Final = "https://api.openai.com/v1"
 ASK_RETRIES: Final = 2
 
+ACP_PROVIDERS: Final = frozenset(
+    {"codex-acp", "claude-acp", "gemini-acp", "opencode-go-acp", "glm-acp"}
+)
+NATIVE_PROVIDERS: Final = frozenset({"anthropic", "gemini"})
+_BUILTIN_PROVIDERS: Final = ACP_PROVIDERS | NATIVE_PROVIDERS | {"openai"}
+_NATIVE_URLS: Final = {
+    # The adapters append only the resource path, so the API version belongs here; the
+    # official-origin check compares the host only.
+    "anthropic": "https://api.anthropic.com/v1",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta",
+}
+_NATIVE_MODELS: Final = {"anthropic": "claude-sonnet-4-5", "gemini": "gemini-2.5-pro"}
+_NATIVE_KEYS: Final = {
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+}
+
 
 @dataclass(frozen=True)
 class AiSettings:
@@ -42,6 +59,15 @@ class AiSettings:
 
 
 @dataclass(frozen=True)
+class AcpSettings:
+    """Limits for a single ACP process and exchange."""
+
+    timeout_seconds: int = 100
+    max_frame_kib: int = 1024
+    max_response_kib: int = 1024
+
+
+@dataclass(frozen=True)
 class AskTarget:
     """Run-time endpoint of ``--ask``: the YAML ``default_provider`` only, never the environment."""
 
@@ -51,6 +77,7 @@ class AskTarget:
     api: Literal["responses", "chat"]
     official: bool
     local: bool
+    kind: str = "openai"
     reasoning_effort: str | None = None
     temperature: float | None = None
 
@@ -161,6 +188,39 @@ def _ollaya_base_url() -> str:
     return host if "://" in host else f"http://{host}"
 
 
+def _native_official(kind: str, url: str | None) -> bool:
+    """Only official HTTPS origins may receive native provider environment keys."""
+    try:
+        parsed = urlparse(url or _NATIVE_URLS[kind])
+        expected = urlparse(_NATIVE_URLS[kind])
+        return (
+            parsed.scheme.lower() == "https"
+            and parsed.hostname == expected.hostname
+            and parsed.port in (None, 443)
+            and parsed.username is None
+            and parsed.password is None
+        )
+    except ValueError:
+        return False
+
+
+def _selected_kind(name: str, providers: Mapping[str, Any], entry: Mapping[str, Any]) -> str:
+    explicit = _clean(entry.get("kind"))
+    if explicit:
+        return explicit.lower()
+    # An empty entry (e.g. an uncommented `codex-acp:`) does not define an endpoint.
+    if name not in providers or not (entry.get("base_url") or entry.get("endpoint")):
+        if name in ACP_PROVIDERS:
+            return "acp"
+        if name in NATIVE_PROVIDERS:
+            return name
+    if name.lower() in _JEV_NAMES:
+        return "jev"
+    if name.lower() in _OLLAYA_NAMES:
+        return "ollaya"
+    return "openai"
+
+
 def _resolve_provider(
     name: str, raw: dict[str, Any], *, generator: bool, fallback_model: str | None = None
 ) -> ProviderConfig:
@@ -170,24 +230,67 @@ def _resolve_provider(
         providers = {}
     if not isinstance(providers, dict):
         raise ConfigError(f"'providers' in {path} must be a mapping.")
-    if providers and name not in providers:
+    if (
+        name not in providers
+        and name not in _BUILTIN_PROVIDERS
+        and not (not providers and name.lower() in _JEV_NAMES | _OLLAYA_NAMES)
+    ):
         known = ", ".join(sorted(str(k) for k in providers))
+        listed = f" (known providers: {known})" if known else ""
         raise ConfigError(
-            f"Provider '{name}' is not defined in {path} (known providers: {known}). "
+            f"Provider '{name}' is not defined in {path}{listed}. "
             "Edit the file or run `aiscript --init`."
         )
     entry = providers.get(name) or {}
     if not isinstance(entry, dict):
         raise ConfigError(f"Provider '{name}' in {path} must be a mapping.")
 
-    default_kind = (
-        "jev"
-        if name.lower() in _JEV_NAMES
-        else "ollaya"
-        if name.lower() in _OLLAYA_NAMES
-        else "openai"
-    )
-    kind = (_clean(entry.get("kind")) or default_kind).lower()
+    kind = _selected_kind(name, providers, entry)
+    if kind == "acp":
+        if not generator or name not in ACP_PROVIDERS:
+            raise ConfigError(f"Provider '{name}' cannot be used as an ACP reviewer or alias.")
+        if entry:
+            raise ConfigError(f"Provider '{name}': ACP settings belong to the agent configuration.")
+        return ProviderConfig(
+            name=name, api_key=None, base_url=None, model="", kind="acp", api="acp"
+        )
+    if kind in NATIVE_PROVIDERS:
+        if not generator:
+            raise ConfigError(f"Provider '{name}': native API reviewer is not supported.")
+        base_url = _clean(entry.get("base_url")) or _clean(entry.get("endpoint"))
+        key = _clean(entry.get("api_key"))
+        if key and key.endswith("..."):
+            key = None
+        if key is None and _native_official(kind, base_url):
+            key = next(
+                (
+                    _clean(os.environ.get(k))
+                    for k in _NATIVE_KEYS[kind]
+                    if _clean(os.environ.get(k))
+                ),
+                None,
+            )
+        if key is None:
+            if not _native_official(kind, base_url):
+                raise ConfigError(
+                    f"Provider '{name}': set api_key explicitly for a non-official endpoint."
+                )
+            raise ConfigError(
+                f"No API key for provider '{name}'. Set api_key or export {_NATIVE_KEYS[kind][0]}."
+            )
+        native_model = (
+            _clean(entry.get("model"))
+            or _clean(os.environ.get("AISCRIPT_MODEL"))
+            or _NATIVE_MODELS[kind]
+        )
+        return ProviderConfig(
+            name=name,
+            api_key=key,
+            base_url=base_url or _NATIVE_URLS[kind],
+            model=native_model,
+            kind=kind,
+            api=kind,
+        )
     if kind not in _KINDS:
         raise ConfigError(
             f"Provider '{name}' in {path} has unknown kind '{kind}' "
@@ -270,7 +373,7 @@ def _resolve_provider(
         env_names = _env_key_name(name)
         if kind == "jev":
             env_names += " or TYPESAFE_API_KEY"
-        elif generator:
+        elif generator and env_names != "OPENAI_API_KEY":
             env_names += " or OPENAI_API_KEY"
         raise ConfigError(
             f"No API key for provider '{name}'. Set `api_key` for it in {path} "
@@ -330,6 +433,7 @@ def load_settings() -> Settings:
     """Resolve generator/reviewer providers; raise ConfigError with actionable text."""
     raw = load_raw_config()
     ai = load_ai_settings(raw)
+    load_acp_settings(raw)  # reject invalid ACP limits before any provider is invoked
     gen_name = (
         _clean(os.environ.get("AISCRIPT_PROVIDER"))
         or _clean(raw.get("default_provider"))
@@ -368,7 +472,37 @@ _KNOWN_KEY_ENV_NAMES: Final = (
     "OPENAI_DECISIONS_API_KEY",
     "TYPESAFE_API_KEY",
     "OLLAYA_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
 )
+
+
+def load_acp_settings(raw: Mapping[str, Any]) -> AcpSettings:
+    """Parse ACP deadline and size limits before launching an agent."""
+    path = config_path()
+    block = raw.get("acp")
+    if block is None:
+        return AcpSettings()
+    if not isinstance(block, dict):
+        raise ConfigError(f"'acp' in {path} must be a mapping.")
+    bounds = {
+        "timeout_seconds": (1, 600),
+        "max_frame_kib": (1, 16384),
+        "max_response_kib": (1, 16384),
+    }
+    for key in block:
+        if key not in bounds:
+            raise ConfigError(f"Unknown key '{key}' in the 'acp' section of {path}.")
+    values: dict[str, int] = {}
+    for key, (low, high) in bounds.items():
+        if key not in block:
+            continue
+        value = block[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            raise ConfigError(f"'acp.{key}' in {path} must be an integer from {low} to {high}.")
+        values[key] = value
+    return AcpSettings(**values)
 
 
 def load_ai_settings(raw: Mapping[str, Any]) -> AiSettings:
@@ -405,22 +539,43 @@ def identify_ask_target(raw: Mapping[str, Any]) -> AskTarget:
         providers = {}
     if not isinstance(providers, dict):
         raise AskConfigError(f"'providers' in {path} must be a mapping.")
-    if providers and name not in providers:
+    if (
+        name not in providers
+        and name not in _BUILTIN_PROVIDERS
+        and not (not providers and name.lower() in _JEV_NAMES | _OLLAYA_NAMES)
+    ):
         known = ", ".join(sorted(str(k) for k in providers))
-        raise AskConfigError(
-            f"Provider '{name}' is not defined in {path} (known providers: {known})."
-        )
+        listed = f" (known providers: {known})" if known else ""
+        raise AskConfigError(f"Provider '{name}' is not defined in {path}{listed}.")
     entry = providers.get(name) or {}
     if not isinstance(entry, dict):
         raise AskConfigError(f"Provider '{name}' in {path} must be a mapping.")
-    default_kind = (
-        "jev"
-        if name.lower() in _JEV_NAMES
-        else "ollaya"
-        if name.lower() in _OLLAYA_NAMES
-        else "openai"
-    )
-    kind = (_clean(entry.get("kind")) or default_kind).lower()
+    kind = _selected_kind(name, providers, entry)
+    if kind == "acp":
+        if name not in ACP_PROVIDERS or entry:
+            raise AskConfigError(
+                f"Provider '{name}': ACP settings belong to the agent configuration."
+            )
+        return AskTarget(
+            provider=name,
+            model="",
+            base_url="",
+            api="chat",
+            official=False,
+            local=False,
+            kind="acp",
+        )
+    if kind in NATIVE_PROVIDERS:
+        url = _clean(entry.get("base_url")) or _clean(entry.get("endpoint"))
+        return AskTarget(
+            provider=name,
+            model=_clean(entry.get("model")) or _NATIVE_MODELS[kind],
+            base_url=url or _NATIVE_URLS[kind],
+            api="chat",
+            official=_native_official(kind, url),
+            local=is_local(url),
+            kind=kind,
+        )
     api_name = (_clean(entry.get("api")) or "").lower()
     if kind != "openai":
         raise AskConfigError(
@@ -471,18 +626,36 @@ def _yaml_key(raw: Mapping[str, Any], provider: str) -> str | None:
 
 def resolve_ask_key(target: AskTarget, raw: Mapping[str, Any], environ: Mapping[str, str]) -> str:
     """Pick the API key for ``target`` in the C4 order (F7, S19)."""
+    if target.kind == "acp":
+        return ""
     key = _yaml_key(raw, target.provider)
     if key is not None:
         return key
+    if target.kind in NATIVE_PROVIDERS:
+        if target.official:
+            for env_name in _NATIVE_KEYS[target.kind]:
+                key = _clean(environ.get(env_name))
+                if key is not None:
+                    return key
+        if not target.official:
+            raise AskConfigError(
+                f"Provider '{target.provider}' uses a non-official endpoint; "
+                f"set api_key in {config_path()}."
+            )
+        raise AskConfigError(
+            f"No API key for provider '{target.provider}'. "
+            f"Set api_key or export {_NATIVE_KEYS[target.kind][0]}."
+        )
     if target.official:
         env_name = _env_key_name(target.provider)
         for name in (env_name, "OPENAI_API_KEY"):
             key = _clean(environ.get(name))
             if key is not None:
                 return key
+        names = env_name if env_name == "OPENAI_API_KEY" else f"{env_name} or OPENAI_API_KEY"
         raise AskConfigError(
             f"No API key for provider '{target.provider}'. Set `api_key` for it in "
-            f"{config_path()} or export {env_name} or OPENAI_API_KEY."
+            f"{config_path()} or export {names}."
         )
     if target.local:
         return "not-needed"
@@ -499,6 +672,8 @@ def describe_ask_target(raw: Mapping[str, Any]) -> str:
         target = identify_ask_target(raw)
     except AskConfigError as exc:
         return f"the default provider (not usable for --ask: {exc})"
+    if target.kind == "acp":
+        return f"provider '{target.provider}' (agent-configured model)"
     return f"provider '{target.provider}' (model {target.model})"
 
 

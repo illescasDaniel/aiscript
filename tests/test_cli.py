@@ -1,3 +1,4 @@
+import io
 import os
 import stat
 import subprocess
@@ -397,3 +398,23 @@ def test_given_key_in_first_use_answer_when_named_command_then_refused_before_sa
     assert gen.calls == []
     assert not paths.prompt_path("echo").exists()
     assert list(paths.prompts_dir().iterdir()) == []
+
+
+def test_given_multiline_bracketed_paste_when_reading_description_then_it_is_one_answer() -> None:
+    # given: a paste whose last line only ends when the user presses Enter
+    stream = io.StringIO("\x1b[200~line one\nline two\nline three\x1b[201~\nleftover\n")
+    # when
+    answer = cli._read_paste_aware(stream)
+    # then
+    assert answer == "line one\nline two\nline three"
+    assert stream.readline() == "leftover\n"
+
+
+def test_given_plain_typed_line_when_reading_description_then_one_line_is_read() -> None:
+    stream = io.StringIO("  do the thing  \nnext\n")
+    assert cli._read_paste_aware(stream) == "do the thing"
+    assert stream.readline() == "next\n"
+
+
+def test_given_eof_when_reading_description_then_answer_is_empty() -> None:
+    assert cli._read_paste_aware(io.StringIO("")) == ""

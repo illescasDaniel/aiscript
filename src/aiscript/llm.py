@@ -89,6 +89,29 @@ def chat(p: ProviderConfig, system: str, user: str) -> str:
     ``temperature`` and ``reasoning_effort`` are sent only when set on the provider:
     GPT-6 models reject ``temperature`` unless reasoning effort is ``none``.
     """
+    if p.kind in ("anthropic", "gemini", "acp"):
+        from aiscript.config import load_acp_settings, load_raw_config
+        from aiscript.provider_factory import make_provider
+        from aiscript.providers.contracts import CompletionError, CompletionRequest
+
+        try:
+            provider = make_provider(
+                p.kind,
+                p.name,
+                p.model,
+                p.base_url,
+                p.api_key,
+                _TIMEOUT_SECONDS,
+                load_acp_settings(load_raw_config()),
+            )
+            result = provider.complete(CompletionRequest(system, user))
+        except CompletionError as exc:
+            detail = f": {exc.detail}" if exc.detail else "."
+            raise AiscriptError(f"Provider '{p.name}' failed ({exc.kind}){detail}") from None
+        if result.status != "completed" or not result.text.strip():
+            raise AiscriptError(f"Provider '{p.name}' returned no complete answer.")
+        return result.text
+
     import openai
 
     try:

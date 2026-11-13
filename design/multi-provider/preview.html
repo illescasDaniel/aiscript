@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-provider generation and ask — system design</title>
+<style>
+	:root {
+		--bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa;
+		--note-bg: #fff8c5; --note-line: #d4a72c; --err-bg: #ffebe9; --err-line: #cf222e;
+	}
+	@media (prefers-color-scheme: dark) {
+		:root {
+			--bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23;
+			--note-bg: #2e2a1a; --note-line: #9e6a03; --err-bg: #2d1416; --err-line: #f85149;
+		}
+	}
+	body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, sans-serif; }
+	main { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+	.note { border: 1px solid var(--note-line); background: var(--note-bg); border-radius: 6px; padding: 8px 12px; }
+	.legend span { display: inline-block; margin-right: 12px; }
+	.legend i { display: inline-block; width: 12px; height: 12px; border: 1px solid; border-radius: 2px;
+		vertical-align: -1px; margin-right: 4px; }
+	h1, h2 { border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+	a { color: inherit; }
+	code { background: var(--code); border-radius: 4px; padding: 1px 4px; font-size: 0.9em; }
+	pre { background: var(--code); border-radius: 6px; padding: 12px; overflow-x: auto; }
+	pre code { background: none; padding: 0; }
+	pre.mermaid { background: none; text-align: center; }
+	pre.mermaid-error { background: var(--err-bg); border: 1px solid var(--err-line); white-space: pre-wrap; }
+	table { border-collapse: collapse; display: block; overflow-x: auto; }
+	th, td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+</style>
+</head>
+<body>
+<main>
+	<p class="note"><strong>Review only.</strong> Generated from <code>DESIGN.md</code>, which is the source of
+	truth. Components:
+	<span class="legend"><span><i style="background:#dcfce7;border-color:#15803d"></i>added</span><span><i
+	style="background:#fef9c3;border-color:#a16207"></i>changed</span><span><i
+	style="background:#fee2e2;border-color:#b91c1c;border-style:dashed"></i>removed</span></span></p>
+	<article id="doc"></article>
+</main>
+<script>const SOURCE = "# Multi-provider generation and ask \u2014 system design\n\n- **Track:** System (CLI and library).\n- **Status:** Proposed, awaiting design approval; no decisions are approved yet.\n- **Review page:** [Design tab](../../sdd/multi-provider.html#p-design), which owns the review, open questions and approvals. This file owns the canonical Mermaid system flow.\n- **Date:** 2026-11-12.\n\n## Outcome and boundaries\n\nA user can generate scripts and use `aiscript.ask` / `aiscript --ask` with a native Anthropic or Gemini API, or select a locally installed ACP agent using only a `default_provider` value, such as `claude-acp` or `codex-acp`. Preserve existing OpenAI-compatible configurations and defaults. Native API provider entries still configure model, credentials and endpoint as appropriate. A user choosing an ACP name should not need a `providers` entry, but must install and authenticate the external agent separately. This proposal does not promise an agent supports any particular account or subscription, model, platform, plan, or permission setting.\n\nThe generator currently resolves `AISCRIPT_PROVIDER` before YAML `default_provider`; ask deliberately uses only YAML `default_provider`. Preserve that distinction. Existing review and generated-script safety/confirmation remain independent. A provider-neutral boundary should describe the requested operation and result, with adapters owning provider-specific translation; it need not force generation and ask to share identical contracts. Configuration and command choices are proposals, pending review and connector verification.\n\n## Main flow\n\n```mermaid\nsequenceDiagram\n    autonumber\n    actor U as User or generated script\n    participant C as aiscript configuration\n    participant P as Provider boundary\n    participant A as API adapter or ACP client\n    participant E as Remote API or local agent\n    U->>C: Select generator or ask operation and provider\n    alt F1: Invalid configuration, name collision or unsupported selection\n        C-->>U: Actionable configuration error\n    else Valid selection\n        C->>P: Resolve selected provider and operation\n        P->>A: Construct request with limits and expected output\n        alt F2: Missing connector, credentials or authentication\n            A-->>U: Setup or authentication error\n        else Connector available\n            A->>E: API call or initialize and start ACP session\n            alt F3: Incompatible ACP handshake or capability\n                E-->>U: Unsupported connector or capability error\n            else F4: Provider rejects request, quota or network fails\n                E-->>U: Provider error and recovery guidance\n            else F5: Agent requests permission for a tool action\n                A-->>E: Deny request; no interactive grant\n                A-->>U: Report unsupported action if task cannot finish\n            else F6: Invalid, refused or unsupported output\n                E-->>U: Validation or unsupported-output error\n            else F7: Cancellation, timeout, protocol or process failure\n                A-->>E: Cancel and clean up where possible\n                A-->>U: Bounded failure; no partial success\n            else Successful response\n                E-->>A: Text or requested structured output\n                A->>P: Normalize and validate response\n                P-->>U: Result; existing generation review continues\n            end\n        end\n    end\n```\n\nACP can emit streaming notifications and reverse requests; the exact error mapping, stop reasons and handling when a denied action is nonessential must be specified after design approval. No silent fallback to a different provider, credential, model or weaker output contract is proposed.\n\n## Selection and connectors\n\nIllustrative selections, not promises of verified launch commands or authentication compatibility:\n\n```yaml\n# API example: existing named-provider configuration applies.\ndefault_provider: anthropic\nproviders:\n  anthropic:\n    kind: anthropic\n    model: \u003cuser-selected-model>\n    api_key: \u003ccredential>\n\n# Alternative: no provider entry required for a built-in ACP name.\ndefault_provider: claude-acp\n```\n\n| Proposed selection | Candidate agent or connector | Evidence and qualification |\n|---|---|---|\n| `codex-acp` (possibly `openai-acp` alias) | [Zed Codex ACP](https://github.com/zed-industries/codex-acp) | ACP adapter; exact supported versions and login behavior require testing. |\n| `claude-acp` | [Claude Agent ACP](https://github.com/agentclientprotocol/claude-agent-acp) | ACP adapter using Claude Agent SDK; supported sign-in and plan terms require verification. |\n| `gemini-acp` | [Gemini CLI ACP mode](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/acp-mode.md) | Official CLI documents `gemini --acp`; account and version compatibility require testing. |\n| `opencode-go-acp` | [OpenCode ACP mode](https://opencode.ai/docs/cli/acp) | OpenCode is the agent; Go is a plan/model selection within its configuration, not a separate proven connector. Validate selection and billing behavior. |\n| `glm-acp` | Candidate agent from the [ACP registry](https://github.com/agentclientprotocol/registry), or OpenCode configured for GLM | Identify and verify a maintained connector, issuer, authentication and plan before claiming support. |\n\nThe [ACP registry](https://github.com/agentclientprotocol/registry) is a discovery source, not an instruction to download or execute arbitrary registry entries. Do not automatically install or update agents during an aiscript invocation. Select a fixed documented connector mapping and launch an argument vector without shell interpolation. Authentication and charges belong to the agent/provider and depend on their terms and active configuration. ACP standardizes communication with agents; it does not itself grant subscription access.\n\n## Failure inventory and recovery\n\n| ID | Condition | Proposed behavior |\n|---|---|---|\n| F1 | Invalid provider configuration, unsupported operation, or conflicting built-in name | Fail before invocation; diagnose selection and show corrective action. |\n| F2 | Connector executable missing or not authenticated, or API key missing | Fail with connector-specific setup guidance; never fetch a binary or expose secrets. |\n| F3 | ACP version negotiation or required capability unavailable | Fail clearly; do not assume all agents implement identical features. |\n| F4 | API or agent reports authentication rejection, rate limit, service or network failure | Preserve a useful bounded diagnostic, fail, and leave retry or provider selection to the caller. |\n| F5 | ACP agent requests a permission-gated tool action | Reject the permission request; if a usable answer cannot be produced, report failure. This policy is not an OS sandbox. |\n| F6 | Refusal, empty/malformed result, invalid schema or unsupported structured output | Validate before returning or using result. Fail rather than return a malformed or silently downgraded response. |\n| F7 | Timeout, cancellation, broken protocol, subprocess termination or cleanup failure | Cancel when possible, terminate and reap owned process, report failure without returning partial output as success. External side effects may already have occurred. |\n\nExisting callers retain their established error surfaces where compatible; exact mappings and exit codes belong in the spec. No thresholds or cross-agent support are asserted without measurement.\n\n## Decisions proposed for review\n\n- **Success:** Native Anthropic and Gemini plus the five requested ACP selections serve generation and ask when the selected connector supports their required contract; provide explicit unsupported-operation errors otherwise. Verify each connector separately, including real authentication when authorized.\n- **Failure and recovery:** F1\u2013F7 fail visibly with actionable, sanitized diagnostics, no cross-provider fallback and no partial-success claim. Retain existing review and confirmation behavior.\n- **Performance and resource budget:** Reuse existing ask limits where meaningful; measure ACP startup and per-request behavior before setting a total timeout, output bound, process count and retry budget. API or agent quotas and pricing are provider-owned.\n- **Trust boundary:** Prompt, agent output, protocol messages and diagnostics are untrusted; validate output and avoid logging secrets. A local agent is executable software with the user's OS permissions, may load its own instructions, tools, configuration and environment, and can take actions without an ACP permission request. Denying client permission requests and using an empty working directory do not constitute sandboxing. Establish isolation separately or clearly disclose residual risk.\n- **Compatibility and rollout:** Keep current OpenAI-compatible defaults, keys, custom endpoints, generation override and YAML-only ask selection. Resolve collisions deliberately; add opt-in providers and document prerequisites. Roll back by restoring the old default provider; no stored-script migration is proposed.\n\n## Open questions\n\n1. **Scope:** Include both generation and runtime ask? Recommend yes, with an explicit unsupported error for capabilities an agent cannot safely provide.\n2. **Agent actions:** Is rejecting ACP permission requests and documenting non-sandboxed agents acceptable? Recommend requiring a verified no-tools or isolated mode per connector for unattended use; otherwise do not claim safety and leave that connector unsupported until resolved.\n3. **Names and collisions:** Reserve built-in `*-acp` names, or allow existing configured names to override them? Recommend preserving existing entries first to avoid breaking existing configurations, and reserve unused built-ins; define alias for `openai-acp` if desired.\n4. **Model selection:** Use each agent's existing configured default or introduce optional overrides? Recommend defaults first, with an optional documented per-agent model override once portable behavior is validated.\n5. **Structured outputs:** Require agent-native schema enforcement, or allow prompted JSON with local validation? Recommend local validation in all cases; label any lack of provider-native schema enforcement and fail clearly when the caller requires a guarantee unavailable from the connector.\n6. **OpenCode Go and GLM:** Is explicit plan/model binding required for each built-in? Recommend yes: never silently consume another account or plan; defer either selection until it can be reliably established.\n\n## Verification planned\n\nAfter approvals, exercise provider dispatch and existing OpenAI behavior; API adapters with controlled HTTP tests; ACP lifecycle with deterministic test agents including reverse permission requests, malformed messages, crashes and cancellation; validate schemas at the caller boundary. Real connector, login and subscription tests require authorized accounts and should be reported separately. Cross-platform installation, agent behavior and actual subscription eligibility remain unverified in this design.\n";</script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+(async function () {
+	const doc = document.getElementById("doc");
+	if (typeof marked === "undefined" || typeof mermaid === "undefined") {
+		doc.innerHTML = '<p class="note">Could not load the renderers (offline?). Showing the raw Markdown.</p>';
+		const pre = document.createElement("pre");
+		pre.textContent = SOURCE;
+		doc.appendChild(pre);
+		return;
+	}
+	const renderer = new marked.Renderer();
+	const plainCode = renderer.code.bind(renderer);
+	renderer.code = function (code, lang) {
+		const token = typeof code === "object" ? code : { text: code, lang: lang };
+		if ((token.lang || "").trim() !== "mermaid") return plainCode.apply(null, arguments);
+		const pre = document.createElement("pre");
+		pre.className = "mermaid";
+		pre.textContent = token.text;
+		return pre.outerHTML;
+	};
+	doc.innerHTML = marked.parse(SOURCE, { renderer: renderer });
+
+	const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+	mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default" });
+	const valid = [];
+	for (const pre of doc.querySelectorAll("pre.mermaid")) {
+		try {
+			await mermaid.parse(pre.textContent);
+			valid.push(pre);
+		} catch (error) {
+			pre.className = "mermaid-error";
+			pre.textContent = "Mermaid syntax error:\n" + (error && error.message ? error.message : error)
+				+ "\n\n" + pre.textContent;
+		}
+	}
+	if (valid.length) await mermaid.run({ nodes: valid });
+	document.body.dataset.rendered = String(valid.length);
+})();
+</script>
+</body>
+</html>

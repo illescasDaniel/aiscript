@@ -14,3 +14,6 @@ backup
 *.yaml.bak
 config.yaml
 secrets.yaml
+
+# Development sandbox (aiscript config, prompts, scripts; see scripts/dev.py)
+.dev/

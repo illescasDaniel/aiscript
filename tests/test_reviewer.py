@@ -1378,3 +1378,69 @@ def test_given_ai_and_credential_on_one_line_when_static_review_then_ai_use_firs
     res = static_review(PYHEAD + code, "python")
     found = [r.split(" (line")[0] for r in res.reasons]
     assert found.index(reviewer.AI_USE) < found.index(reviewer.CREDENTIAL)
+
+
+def test_given_echo_of_error_text_naming_ask_to_stderr_then_it_is_not_ai_use() -> None:
+    # given: only the first line really calls the model
+    code = _ai_script(
+        'out="$(git log | aiscript --ask "sum" --data-description "log")" || {\n'
+        '  echo "Error: aiscript --ask failed with exit status $?." >&2\n'
+        "  exit 1\n"
+        "}\n"
+        'echo "$out"',
+        "bash",
+    )
+    # when
+    res = review(code, "bash", None, ai_target=TARGET)
+    # then
+    assert len(res.reasons) == 1
+    assert res.reasons[0].startswith("AI use (line 2)")
+
+
+def test_given_only_ai_use_when_confirming_then_a_note_not_a_warning_is_shown(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # given
+    code = _ai_script('aiscript --ask "x" --data-description "y" < f', "bash")
+    res = review(code, "bash", None, ai_target=TARGET)
+    # when
+    confirm(code, res, input_fn=lambda _: "n", stdin_isatty=True)
+    # then
+    err = capsys.readouterr().err
+    assert "NOTE: this script sends data to your AI provider." in err
+    assert f"sent to {TARGET}:" in err
+    assert "Nothing is sent unless the script runs." in err
+    assert "WARNING" not in err and "!!!!" not in err
+
+
+def test_given_ai_use_and_another_risk_when_confirming_then_warning_is_kept(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # given
+    code = _ai_script('aiscript --ask "x" --data-description "y" < f\nrm -rf /etc/foo', "bash")
+    res = review(code, "bash", None, ai_target=TARGET)
+    # when
+    confirm(code, res, input_fn=lambda _: "n", stdin_isatty=True)
+    # then
+    err = capsys.readouterr().err
+    assert "WARNING: this generated script may be risky:" in err
+    assert "NOTE:" not in err
+
+
+def test_given_import_and_ask_call_then_only_the_call_is_reported_as_ai_use() -> None:
+    # given
+    code = _ai_script("import aiscript\nanswer = aiscript.ask('t', 'd', 'x')", "python")
+    # when
+    res = review(code, "python", None, ai_target=TARGET)
+    # then
+    ai = [r for r in res.reasons if r.startswith("AI use")]
+    assert len(ai) == 1 and "aiscript.ask" in ai[0]
+
+
+def test_given_aliased_call_only_the_import_is_still_reported() -> None:
+    # given: no direct aiscript.ask call, so the import stays as the backstop
+    code = _ai_script("import aiscript\nask = aiscript.ask\nask('t', 'd', 'x')", "python")
+    # when
+    res = review(code, "python", None, ai_target=TARGET)
+    # then
+    assert res.risky and any(r.startswith("AI use") for r in res.reasons)

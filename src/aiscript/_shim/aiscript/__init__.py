@@ -5,9 +5,12 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
-from typing import Any, Dict, Optional, Union
+import sys
+import threading
+from typing import Any, Dict, List, Optional, Union
 
 _STDERR_LIMIT = 500
 
@@ -104,6 +107,39 @@ def _error_for(code: int, stderr: bytes) -> AskError:
     return error
 
 
+def _run_child(argv: List[str], data: bytes, env: Dict[str, str]) -> subprocess.CompletedProcess:
+    """Stream only the known status while subprocess.run drains stdout and stdin."""
+    read_fd, write_fd = os.pipe()
+    stderr = bytearray()
+    notice = re.compile(
+        rb"aiscript: (?:This request can take up to [0-9]+ seconds\.|"
+        rb"Timeout [0-9]+ seconds per attempt; retries may take longer\.)\r?\n$"
+    )
+
+    def read_errors() -> None:
+        shown = False
+        with os.fdopen(read_fd, "rb") as stream:
+            while True:
+                line = stream.readline(1024)
+                if not line:
+                    break
+                if not shown and notice.fullmatch(line):
+                    sys.stderr.write(line.decode("ascii"))
+                    sys.stderr.flush()
+                    shown = True
+                elif line.startswith(b"aiscript: error: ") and len(stderr) < _STDERR_LIMIT:
+                    stderr.extend(line[: _STDERR_LIMIT - len(stderr)])
+
+    thread = threading.Thread(target=read_errors, daemon=True)
+    thread.start()
+    try:
+        result = subprocess.run(argv, input=data, stdout=subprocess.PIPE, stderr=write_fd, env=env)
+    finally:
+        os.close(write_fd)
+        thread.join()
+    return subprocess.CompletedProcess(argv, result.returncode, result.stdout, bytes(stderr))
+
+
 def ask(
     task: str,
     data: str,
@@ -128,12 +164,7 @@ def ask(
         raise AskNotFoundError(
             "aiscript was not found on PATH; install aiscript so that `aiscript` is on PATH."
         )
-    proc = subprocess.run(
-        [exe] + args,
-        input=data.encode("utf-8"),
-        capture_output=True,
-        env=_child_env(),
-    )
+    proc = _run_child([exe] + args, data.encode("utf-8"), _child_env())
     if proc.returncode != 0:
         raise _error_for(proc.returncode, proc.stderr)
     out = proc.stdout.decode("utf-8")

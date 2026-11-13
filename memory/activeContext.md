@@ -6,7 +6,7 @@ _Last updated: 2026-11-12_
 
 ## Current focus
 
-1.4.0 "AI inside generated scripts" is built, QA'd (25/25), graded (round 1 NEEDS WORK, fixes applied, not re-graded by the user's choice) and being released. Page: `sdd/ai-in-scripts.html`.
+Multi-provider and ACP support: built, QA'd and graded (NEEDS WORK; fix budget spent). Quality gate green (1403 tests). Q3 resolved: spec amended, empty answer exits 8. OpenCode Go enabled with a model guard and qualified live. Claude ACP also qualified live (README scripts pass). Remaining decision: G2 for codex/gemini/glm connectors (unqualified; glm executable unverified). See `sdd/multi-provider.html` Verify tab. Nothing committed. 1.4.0 remains awaiting release.
 
 ## Blockers
 
@@ -14,4 +14,4 @@ None. Manual checks not done: M1 (strict schema on a non-OpenAI server), M3 (Win
 
 ## Next steps
 
-Publish 1.4.0. Then the follow-up feature: native Anthropic/Gemini providers (user-requested). Image generation is deferred to 1.5.0.
+Run scenario tests before implementation, then implement and run quality gate, QA and independent grade. vLLM support is a separate future task. Publish 1.4.0 when separately authorized. Image generation is deferred to 1.5.0.

@@ -1,12 +1,16 @@
 # Configuration reference
 
 aiscript reads `config.yaml` from its config directory (see [Locations](#locations)). Run
-`aiscript --init` to create a starter file.
-With no file at all, the generator works from `OPENAI_API_KEY` alone.
+`aiscript --init` to create a starter file. On an interactive first use that needs script
+generation, aiscript also offers provider selection if neither the current nor legacy config
+exists. It checks only local executable and environment-key presence, not login or entitlement;
+you can select an undetected provider. Help, cached runs, `--ask` and non-interactive runs do not
+prompt. With no file at all, non-interactive generation retains the OpenAI default.
 
 ## Starter configuration
 
-`aiscript --init` writes this starter `~/.config/aiscript/config.yaml` (mode 600; keep it out of git):
+The starter `~/.config/aiscript/config.yaml` is private (mode 600; keep it out of git). This is
+an abbreviated example; `--init` includes additional comments and examples:
 
 ```yaml
 # aiscript config. Contains API keys: keep it private (chmod 600) and out of git.
@@ -15,6 +19,12 @@ With no file at all, the generator works from `OPENAI_API_KEY` alone.
 
 # Provider that writes the scripts (override with $AISCRIPT_PROVIDER).
 default_provider: openai
+
+# Optional ACP request limits (defaults shown).
+# acp:
+#   timeout_seconds: 100
+#   max_frame_kib: 1024
+#   max_response_kib: 1024
 
 # Decision model that reviews scripts on top of the built-in static scan.
 # Use `ollaya` for a local, keyless review; comment out to use only the static scan.
@@ -26,6 +36,19 @@ providers:
     api_key: "..."
     model: "gpt-6-luna"
     # reasoning_effort: low    # none | low | medium | high | xhigh | max (model-dependent)
+
+  # Anthropic (Claude API); set default_provider: anthropic. Alternative to api_key: ANTHROPIC_API_KEY.
+  anthropic:
+    api_key: "..."
+    model: "claude-sonnet-5-5"
+
+  # Google Gemini API; set default_provider: gemini. Alternative to api_key: GEMINI_API_KEY or GOOGLE_API_KEY.
+  gemini:
+    api_key: "..."
+    model: "gemini-3-pro"
+
+  # ACP names need no provider entry; model and login belong to the agent:
+  # codex-acp:   claude-acp:   gemini-acp:   opencode-go-acp:   glm-acp:
 
   # OpenAI Decisions API reviewer provider.
   # openai_decisions:
@@ -59,16 +82,19 @@ review contract.
 | `default_provider` | Provider that writes the scripts, and also answers the AI calls made by generated scripts (`aiscript.ask`). Default `openai`. `$AISCRIPT_PROVIDER` overrides it for generation only. |
 | `reviewer_provider` | Provider used as the decision model for the safety review. Omit to use only the static scan. |
 | `ai` | Optional [limits](#ai-limits) for AI calls inside scripts. |
+| `acp` | Optional [ACP limits](#acp-limits) for generation and AI calls inside scripts. |
 | `providers` | Mapping of provider name to its settings. |
 
-If `providers` is non-empty, the generator and the reviewer must both be listed in it. If it is
-empty or missing, any name is accepted and settings come from environment variables and defaults.
+Built-in `openai`, `anthropic`, `gemini` and the ACP names can be selected without an entry, even
+when other entries exist. Other provider names must be defined. An explicit entry with the same
+name takes precedence over a built-in; give a native API entry its explicit `kind`. Select
+reviewers separately as described below.
 
 ## Provider settings
 
 | Key | Meaning |
 |---|---|
-| `kind` | `openai`, `jev` or `ollaya`. Inferred from the provider name: `jev` and `typesafe` give `jev`, `ollaya` gives `ollaya`, anything else `openai`. |
+| `kind` | `openai`, `anthropic`, `gemini`, `jev` or `ollaya`. Built-in ACP selections use their agent without a provider definition. |
 | `api_key` | API key. Values ending in `...` (template placeholders) are ignored. |
 | `base_url` | Endpoint URL. `endpoint` is accepted as an alias. |
 | `model` | Model name. |
@@ -81,6 +107,18 @@ empty or missing, any name is accepted and settings come from environment variab
 - **openai**: an OpenAI-compatible text API (OpenAI, Ollama, vLLM, ...). Can be the generator or an
   LLM-based reviewer (which returns a JSON verdict). Explicit `api: decisions` instead selects
   the official OpenAI Decisions endpoint for review only.
+- **anthropic** and **gemini**: the native provider APIs for generation and AI calls inside
+  scripts. They use separate provider credentials and model settings; the built-in names require
+  no provider entry. Native API reviewer support is not included.
+- **ACP agents**: select `codex-acp`, `claude-acp`, `gemini-acp`, `opencode-go-acp` or
+  `glm-acp` as `default_provider`, with no entry under `providers:`. The agent must be installed
+  and authenticated separately, and it chooses its model through its own configuration. aiscript
+  does not install agents or manage logins. Actual connector versions, account eligibility,
+  authentication and platform support remain unverified. Executables launched: `codex-acp` (Codex),
+  `claude-agent-acp` (Claude), `gemini --acp` (Gemini), `glm-acp-agent` (GLM) and `opencode acp`
+  (OpenCode Go). `opencode-go-acp` fails closed unless your OpenCode config sets `"model": "opencode-go/<model>"` (see
+  `opencode models opencode-go`). See [ACP limits](#acp-limits) and
+  [ACP trust and privacy](safety.md#acp-agents).
 - **jev**: [Jev](https://docs.typesafe.ai) by TypeSafe AI, reached through the `typesafe-sdk`
   package. It is a classifier, not a chat model, so it can only be the `reviewer_provider`.
   `model` defaults to `jev-latest`; `base_url` defaults to the SDK's (`https://api.typesafe.ai`).
@@ -90,6 +128,22 @@ empty or missing, any name is accepted and settings come from environment variab
   `jevk5:4b`. It also can only be the reviewer. Run `ollaya serve` first.
 
 Using a `jev` or `ollaya` provider as `default_provider` is a configuration error.
+
+### Installing ACP agents
+
+aiscript does not install or sign in to agents; do both once yourself. They must be on your `PATH`.
+
+| Selection | Install | Sign in |
+|---|---|---|
+| `claude-acp` | `npm install -g @agentclientprotocol/claude-agent-acp` | sign in with Claude Code (`claude`) |
+| `codex-acp` | `npm install -g @agentclientprotocol/codex-acp` | `codex login` |
+| `gemini-acp` | `npm install -g @google/gemini-cli` | run `gemini` once |
+| `opencode-go-acp` | install [OpenCode](https://opencode.ai/docs/) | `opencode auth login` (OpenCode Go) |
+| `glm-acp` | no verified connector yet (aiscript looks for `glm-acp-agent`) | |
+
+Only `claude-acp`, `codex-acp` and `opencode-go-acp` have been tried against real installs
+(Codex with a single question); the others follow the connectors' documentation. If an agent is missing, aiscript says which
+executable it could not find.
 
 ### `api`: responses vs chat
 
@@ -150,6 +204,11 @@ These settings apply to text APIs. A Decisions reviewer rejects either setting.
 For existing text/Jev/Ollaya providers, the first match wins. Decisions uses the dedicated
 two-source rule [above](#openai-decisions).
 
+For native `anthropic` and `gemini`, an explicit provider `api_key` wins. Otherwise the official
+Anthropic endpoint uses `ANTHROPIC_API_KEY`; the official Gemini endpoint uses `GEMINI_API_KEY`
+or `GOOGLE_API_KEY`. A custom endpoint needs an explicit YAML key: native environment keys are
+not redirected to it. ACP agents use their own authentication, not an aiscript API key.
+
 1. `api_key` in `config.yaml` (unless it ends in `...`)
 2. `<NAME>_API_KEY`, where `<NAME>` is the provider name uppercased with non-alphanumerics as `_`
    (`jev` gives `JEV_API_KEY`, `my-local` gives `MY_LOCAL_API_KEY`)
@@ -173,13 +232,15 @@ must be integers within the bounds. Defaults:
 ai:
   max_input_kb: 128        # 1-1024; input at or above this is refused, never truncated
   max_calls_per_run: 1     # 1-100; the next call in one run exits 9
-  timeout_seconds: 60      # 1-600; per request
+  timeout_seconds: 60      # 1-600; API timeout per attempt
   max_output_tokens: 4000  # 1-32000
 ```
 
-Retries are fixed at 2. At run time the call uses only the `default_provider` entry in the YAML
-(it must be `kind: openai`, `api: responses` or `chat`); `AISCRIPT_PROVIDER`, `AISCRIPT_MODEL`
-and `OPENAI_BASE_URL` are ignored so a script cannot redirect the key.
+OpenAI API retries are fixed at 2. At run time the call uses only the YAML `default_provider`;
+`AISCRIPT_PROVIDER`, `AISCRIPT_MODEL` and `OPENAI_BASE_URL` do not redirect it. The selection may
+be an OpenAI-compatible API, native Anthropic or Gemini, or a built-in ACP agent. Agent-owned
+configuration may independently choose its model or backend. A status line on stderr reports
+the applicable deadline when a provider call starts; it does not enter the returned answer.
 
 Key resolution for AI calls, first match wins:
 
@@ -187,9 +248,26 @@ Key resolution for AI calls, first match wins:
 2. `<NAME>_API_KEY`
 3. `OPENAI_API_KEY`
 
-Keys from the environment (2 and 3) are sent only to `api.openai.com`; any other endpoint needs
-its key in the YAML entry. Loopback endpoints (`localhost`, `127.0.0.1`, `::1`) need no key. A
-broken reviewer configuration does not affect AI calls.
+For OpenAI-compatible calls, keys from the environment (2 and 3) are sent only to
+`api.openai.com`; any other endpoint needs its key in the YAML entry. Loopback endpoints
+(`localhost`, `127.0.0.1`, `::1`) need no key. Native keys follow the provider-specific rule
+above; ACP authentication belongs to the agent. A broken reviewer configuration does not affect
+AI calls.
+
+## ACP limits
+
+Optional `acp:` settings apply to both generation and AI calls inside scripts:
+
+```yaml
+acp:
+  timeout_seconds: 100     # 1-600; total request deadline
+  max_frame_kib: 1024      # 1-16384; per ACP protocol frame
+  max_response_kib: 1024   # 1-16384; total returned answer text
+```
+
+All values must be integers in the shown ranges. Exceeding a deadline or size limit fails the
+request without returning a partial answer. These limits do not cap model tokens, billing, or
+agent-internal actions. They do not provide an operating-system sandbox.
 
 ## Model resolution
 
@@ -197,9 +275,12 @@ Decisions uses its explicit model or its independent `gpt-6-luna` default. Other
 
 1. `model` in the provider's YAML
 2. Generator only: `$AISCRIPT_MODEL`
-3. Defaults: `jevk5:4b` for Ollaya, `jev-latest` for Jev
+3. Defaults: `jevk5:4b` for Ollaya, `jev-latest` for Jev, `claude-sonnet-4-5` for Anthropic,
+   and `gemini-2.5-pro` for Gemini
 4. Otherwise the generator's model for an OpenAI-kind reviewer, or the built-in default
    `gpt-6-luna` for the generator
+
+ACP agents use the model selected by their own configuration; aiscript does not override it.
 
 ## Environment variables
 
@@ -210,6 +291,8 @@ Decisions uses its explicit model or its independent `gpt-6-luna` default. Other
 | `AISCRIPT_PROVIDER` | Generator provider name (overrides `default_provider`) |
 | `AISCRIPT_MODEL` | Generator model when none is set in YAML |
 | `OPENAI_API_KEY` | Fallback key for an `openai`-kind generator |
+| `ANTHROPIC_API_KEY` | Key for the official Anthropic API |
+| `GEMINI_API_KEY`, `GOOGLE_API_KEY` | Keys for the official Gemini API; Gemini key takes precedence |
 | `OPENAI_BASE_URL` | Fallback `base_url` for the generator |
 | `OPENAI_DECISIONS_API_KEY` | Key for a reviewer named `openai_decisions` when its YAML key is unset |
 | `TYPESAFE_API_KEY` | Fallback key for `jev` providers |
